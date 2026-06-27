@@ -1,0 +1,119 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Sally – Ethical Hacker</title>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body { font-family: 'Segoe UI', sans-serif; background: #f5f7fa; display: flex; justify-content: center; align-items: center; min-height: 100vh; padding: 20px; }
+        .chat-container { max-width: 700px; width: 100%; background: white; border-radius: 24px; box-shadow: 0 10px 30px rgba(0,0,0,0.1); padding: 30px 25px; }
+        #greeting { display: none; text-align: center; margin-bottom: 20px; font-size: 1.2em; line-height: 1.6; color: #1a2a3a; }
+        #greeting strong { color: #2a5c8a; }
+        #greeting .intro { background: #eef3f9; padding: 18px; border-radius: 16px; margin-top: 10px; text-align: left; }
+        #chat-box { height: 350px; overflow-y: auto; border: 1px solid #e2e8f0; border-radius: 16px; padding: 15px; background: #fafcff; margin: 15px 0; display: flex; flex-direction: column; }
+        .message { margin: 6px 0; padding: 10px 14px; border-radius: 18px; max-width: 80%; word-wrap: break-word; }
+        .user { align-self: flex-end; background: #2a5c8a; color: white; }
+        .ai { align-self: flex-start; background: #e2e8f0; color: #1a2a3a; }
+        .typing-indicator { align-self: flex-start; color: #6a7a8a; font-style: italic; margin: 5px 0; }
+        .input-area { display: flex; gap: 10px; margin-top: 10px; }
+        #user-input { flex: 1; padding: 12px 16px; border: 1.5px solid #d0d9e6; border-radius: 30px; font-size: 1em; outline: none; }
+        #user-input:focus { border-color: #2a5c8a; }
+        #send-btn { padding: 12px 28px; background: #2a5c8a; color: white; border: none; border-radius: 30px; font-weight: 600; cursor: pointer; }
+        #send-btn:hover { background: #1d466b; }
+        .services { display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; margin-top: 15px; }
+        .service-tag { background: #eef3f9; padding: 5px 16px; border-radius: 30px; font-size: 0.85em; border: 1px solid #d0d9e6; }
+    </style>
+</head>
+<body>
+    <div class="chat-container">
+        <div id="greeting">
+            <strong>👋 Hello, I am Sally</strong>
+            <div class="intro">
+                an ethical hacker consultant, cyber security analyst, a forex trader mentor,<br>
+                a graduate of Alupe University and a former CEO and currently a retired tutor.
+            </div>
+            <p style="margin-top: 12px;">How can I help you? I offer services in:<br>
+                <span class="service-tag">Ethical Hacking</span>
+                <span class="service-tag">Forex Trading</span>
+                <span class="service-tag">Web‑Development</span>
+                <span class="service-tag">Automation</span>
+                <span class="service-tag">Bot Creation</span>
+            </p>
+        </div>
+        <div id="chat-box"></div>
+        <div class="input-area">
+            <input type="text" id="user-input" placeholder="Ask me anything..." />
+            <button id="send-btn">Send</button>
+        </div>
+        <div class="services">
+            <span class="service-tag">🔒 Ethical Hacking</span>
+            <span class="service-tag">📈 Forex Trading</span>
+            <span class="service-tag">🌐 Web‑Development</span>
+            <span class="service-tag">⚙️ Automation</span>
+            <span class="service-tag">🤖 Bot Creation</span>
+        </div>
+    </div>
+    <script>
+        const chatBox = document.getElementById('chat-box');
+        const userInput = document.getElementById('user-input');
+        const sendBtn = document.getElementById('send-btn');
+        const greetingDiv = document.getElementById('greeting');
+
+        setTimeout(() => { greetingDiv.style.display = 'block'; }, 2000);
+
+        function addMessage(text, sender) {
+            const msg = document.createElement('div');
+            msg.className = 'message ' + sender;
+            msg.textContent = text;
+            chatBox.appendChild(msg);
+            chatBox.scrollTop = chatBox.scrollHeight;
+        }
+
+        let typingIndicator = null;
+        function showTyping() {
+            if (typingIndicator) return;
+            typingIndicator = document.createElement('div');
+            typingIndicator.className = 'typing-indicator';
+            typingIndicator.textContent = 'Sally is typing...';
+            chatBox.appendChild(typingIndicator);
+            chatBox.scrollTop = chatBox.scrollHeight;
+        }
+        function hideTyping() {
+            if (typingIndicator) { typingIndicator.remove(); typingIndicator = null; }
+        }
+
+        async function sendMessage() {
+            const message = userInput.value.trim();
+            if (!message) return;
+            addMessage(message, 'user');
+            userInput.value = '';
+            sendBtn.disabled = true;
+            showTyping();
+            try {
+                const response = await fetch('/chat', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ message })
+                });
+                const data = await response.json();
+                hideTyping();
+                addMessage(data.response, 'ai');
+            } catch (e) {
+                hideTyping();
+                addMessage('Sorry, I am having trouble connecting.', 'ai');
+            }
+            sendBtn.disabled = false;
+        }
+
+        sendBtn.addEventListener('click', sendMessage);
+        userInput.addEventListener('keypress', (e) => { if (e.key === 'Enter') sendMessage(); });
+
+        setTimeout(() => {
+            if (chatBox.children.length === 0) {
+                addMessage("Hello! I'm Sally. How can I assist you today?", 'ai');
+            }
+        }, 3000);
+    </script>
+</body>
+</html>
