@@ -9,13 +9,10 @@ from telegram import Update
 from telegram.ext import Application, CommandHandler, ContextTypes
 import google.generativeai as genai
 
-# ============================================================
 # 🔥 HARDCODED CREDENTIALS – REPLACE WITH YOUR NEW TOKENS
-# ============================================================
 TELEGRAM_TOKEN = "8585104821:AAFXZn3g7QG9NsCmLmZuyfviQkPddOYMJzc"
 GEMINI_API_KEY = "AQ.Ab8RN6LaSwaPA6i3WkMqdmGSVunWJTE6rRTaa4bPnbM1LAO0aQ"
 ALLOWED_CHAT_ID = "8468538314"
-# ============================================================
 
 if not TELEGRAM_TOKEN or not GEMINI_API_KEY:
     raise Exception("Missing TELEGRAM_TOKEN or GEMINI_API_KEY")
