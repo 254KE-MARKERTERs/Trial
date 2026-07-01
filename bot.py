@@ -1,7 +1,6 @@
 import os
 import re
 import json
-import asyncio
 import requests
 from urllib.parse import urljoin, urlparse, parse_qs
 from queue import Queue
@@ -281,11 +280,11 @@ async def scan_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         await update.message.reply_text(f"❌ Error: {str(e)}")
 
-async def main():
+def main():
     app = Application.builder().token(TELEGRAM_TOKEN).build()
     app.add_handler(CommandHandler("help", help_command))
     app.add_handler(CommandHandler("scan", scan_command))
-    await app.run_polling()
+    app.run_polling()
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    main()
