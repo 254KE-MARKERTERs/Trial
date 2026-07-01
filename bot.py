@@ -1,6 +1,7 @@
 import os
 import re
 import json
+import asyncio
 import requests
 from urllib.parse import urljoin, urlparse, parse_qs
 from queue import Queue
@@ -9,7 +10,7 @@ from telegram import Update
 from telegram.ext import Application, CommandHandler, ContextTypes
 import google.generativeai as genai
 
-# 🔥 HARDCODED CREDENTIALS – REPLACE WITH YOUR NEW TOKENS
+# 🔥 Hardcoded credentials – Testing tokens
 TELEGRAM_TOKEN = "8585104821:AAFXZn3g7QG9NsCmLmZuyfviQkPddOYMJzc"
 GEMINI_API_KEY = "AQ.Ab8RN6LaSwaPA6i3WkMqdmGSVunWJTE6rRTaa4bPnbM1LAO0aQ"
 ALLOWED_CHAT_ID = "8468538314"
@@ -280,11 +281,11 @@ async def scan_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         await update.message.reply_text(f"❌ Error: {str(e)}")
 
-def main():
+async def main():
     app = Application.builder().token(TELEGRAM_TOKEN).build()
     app.add_handler(CommandHandler("help", help_command))
     app.add_handler(CommandHandler("scan", scan_command))
-    app.run_polling()
+    await app.run_polling()
 
 if __name__ == "__main__":
-    main()
+    asyncio.run(main())
