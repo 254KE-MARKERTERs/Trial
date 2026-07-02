@@ -17,10 +17,7 @@ import google.generativeai as genai
 # ============================================================
 # LOGGING
 # ============================================================
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-)
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
 # ============================================================
@@ -38,7 +35,6 @@ if not GEMINI_API_KEY or GEMINI_API_KEY == "YOUR_GEMINI_API_KEY":
     sys.exit(1)
 
 logger.info("✅ Tokens validated.")
-
 try:
     genai.configure(api_key=GEMINI_API_KEY)
     model = genai.GenerativeModel('gemini-1.5-flash')
@@ -51,17 +47,13 @@ except Exception as e:
 # COMMAND HANDLERS
 # ============================================================
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    try:
-        await update.message.reply_text(
-            "🦅 **Commands:**\n"
-            "/scan <url> – Start vulnerability scan\n"
-            "/help – Show this message\n\n"
-            "Example: `/scan https://example.com`",
-            parse_mode='Markdown'
-        )
-    except Exception as e:
-        logger.error(f"help_command error: {e}")
-        await update.message.reply_text("❌ An error occurred. Please try again.")
+    await update.message.reply_text(
+        "🦅 **Commands:**\n"
+        "/scan <url> – Comprehensive vulnerability scan\n"
+        "/help – Show this message\n\n"
+        "Example: `/scan https://example.com`",
+        parse_mode='Markdown'
+    )
 
 # ============================================================
 # WEB CRAWLER
@@ -73,7 +65,7 @@ class WebCrawler:
         self.queue = Queue()
         self.queue.put(base_url)
         self.max_pages = max_pages
-        self.results = {'forms': [], 'params': []}
+        self.results = {'pages': [], 'forms': [], 'params': [], 'js_files': []}
         self.logger = logging.getLogger(__name__)
 
     def crawl(self):
@@ -88,10 +80,13 @@ class WebCrawler:
                 if response.status_code != 200:
                     continue
                 soup = BeautifulSoup(response.text, 'html.parser')
+                self.results['pages'].append(url)
+                # Links
                 for link in soup.find_all('a', href=True):
                     full_url = urljoin(self.base_url, link['href'])
                     if full_url.startswith(self.base_url) and full_url not in self.visited:
                         self.queue.put(full_url)
+                # Forms
                 for form in soup.find_all('form'):
                     action = form.get('action')
                     action_url = urljoin(self.base_url, action) if action else url
@@ -101,6 +96,12 @@ class WebCrawler:
                         'inputs': [inp.get('name') for inp in form.find_all('input') if inp.get('name')],
                         'page': url
                     })
+                # JS files
+                for script in soup.find_all('script', src=True):
+                    js_url = urljoin(self.base_url, script['src'])
+                    if js_url.startswith(self.base_url):
+                        self.results['js_files'].append(js_url)
+                # Params from query strings
                 parsed = urlparse(url)
                 if parsed.query:
                     params = parse_qs(parsed.query)
@@ -110,37 +111,65 @@ class WebCrawler:
                             'parameter': key,
                             'sample_value': params[key][0]
                         })
-            except requests.exceptions.Timeout:
-                self.logger.warning(f"⏰ Timeout on {url}")
             except Exception as e:
                 self.logger.error(f"❌ Error on {url}: {e}")
             self.queue.task_done()
-        self.logger.info(f"✅ Crawl complete: {len(self.results['forms'])} forms, {len(self.results['params'])} params")
+        self.logger.info(f"✅ Crawled {len(self.results['pages'])} pages, {len(self.results['forms'])} forms")
         return self.results
 
 # ============================================================
-# VULNERABILITY SCANNER
+# COMPREHENSIVE VULNERABILITY SCANNER
 # ============================================================
-class VulnerabilityScanner:
+class ComprehensiveScanner:
     def __init__(self, base_url, crawl_data):
         self.base_url = base_url
-        self.crawl_data = crawl_data
-        self.findings = []
+        self.pages = crawl_data['pages']
+        self.forms = crawl_data['forms']
+        self.params = crawl_data['params']
+        self.js_files = crawl_data['js_files']
+        self.findings = {'vulnerable': [], 'passed': []}
         self.logger = logging.getLogger(__name__)
 
     def scan_all(self):
-        self.logger.info("🔐 Starting vulnerability scan...")
-        self.scan_xss()
-        self.scan_sqli()
-        self.scan_headers()
-        self.scan_directory_listing()
-        self.scan_client_validation_bypass()
-        self.logger.info(f"✅ Scan complete: {len(self.findings)} findings")
+        self.logger.info("🔐 Starting comprehensive vulnerability scan...")
+        self.check_xss()
+        self.check_sqli()
+        self.check_command_injection()
+        self.check_ssrf()
+        self.check_open_redirect()
+        self.check_security_headers()
+        self.check_cookie_security()
+        self.check_directory_listing()
+        self.check_sensitive_files()
+        self.check_server_version()
+        self.check_csrf()
+        self.check_https()
+        # Add more checks here...
+        self.logger.info(f"✅ Scan complete: {len(self.findings['vulnerable'])} vulnerabilities found")
         return self.findings
 
-    def scan_xss(self):
+    # ---------- INDIVIDUAL CHECKS ----------
+    def add_vulnerability(self, name, severity, url, description, remediation, proof, parameter=None, payload=None):
+        self.findings['vulnerable'].append({
+            'name': name,
+            'severity': severity,
+            'url': url,
+            'parameter': parameter,
+            'payload': payload,
+            'description': description,
+            'remediation': remediation,
+            'proof': proof
+        })
+
+    def add_passed(self, check_name, details):
+        self.findings['passed'].append({
+            'check': check_name,
+            'details': details
+        })
+
+    def check_xss(self):
         payloads = ['<script>alert(1)</script>', '"><script>alert(1)</script>', 'javascript:alert(1)']
-        for form in self.crawl_data['forms']:
+        for form in self.forms:
             for payload in payloads:
                 data = {inp: payload for inp in form['inputs'] if inp}
                 if not data:
@@ -151,23 +180,23 @@ class VulnerabilityScanner:
                     else:
                         resp = requests.get(form['url'], params=data, timeout=10, verify=False)
                     if payload in resp.text or '<script>' in resp.text:
-                        self.findings.append({
-                            'vulnerability': 'Cross‑Site Scripting (XSS)',
-                            'severity': 'High',
-                            'url': form['url'],
-                            'parameter': list(data.keys())[0],
-                            'payload': payload,
-                            'description': 'Reflected XSS – user input is returned without proper sanitization.',
-                            'remediation': 'Apply HTML entity encoding to all user input before reflection.',
-                            'proof': f"Payload '{payload}' appeared in the response."
-                        })
-                        self.logger.info(f"🔴 XSS found on {form['url']}")
-                except Exception as e:
-                    self.logger.debug(f"XSS test failed on {form['url']}: {e}")
+                        self.add_vulnerability(
+                            'Cross-Site Scripting (XSS)',
+                            'High',
+                            form['url'],
+                            'Reflected XSS – user input is returned without proper sanitization.',
+                            'Apply HTML entity encoding to all user input before reflection.',
+                            f"Payload '{payload}' appeared in the response.",
+                            parameter=list(data.keys())[0] if data else None,
+                            payload=payload
+                        )
+                        break
+                except:
+                    pass
 
-    def scan_sqli(self):
+    def check_sqli(self):
         payloads = ["' OR '1'='1", "'; DROP TABLE users; --", "UNION SELECT ALL"]
-        for form in self.crawl_data['forms']:
+        for form in self.forms:
             for payload in payloads:
                 data = {inp: payload for inp in form['inputs'] if inp}
                 if not data:
@@ -180,119 +209,314 @@ class VulnerabilityScanner:
                     sql_errors = ['SQL syntax', 'mysql_fetch', 'ORA-', 'PostgreSQL', 'SQLite', 'You have an error']
                     for error in sql_errors:
                         if error.lower() in resp.text.lower():
-                            self.findings.append({
-                                'vulnerability': 'SQL Injection (SQLi)',
-                                'severity': 'Critical',
-                                'url': form['url'],
-                                'parameter': list(data.keys())[0],
-                                'payload': payload,
-                                'description': f'Database error detected: "{error}". Input is directly used in SQL queries.',
-                                'remediation': 'Use parameterized queries (prepared statements) and input validation.',
-                                'proof': f"Payload '{payload}' triggered a database error."
-                            })
-                            self.logger.info(f"🔴 SQLi found on {form['url']}")
+                            self.add_vulnerability(
+                                'SQL Injection (SQLi)',
+                                'Critical',
+                                form['url'],
+                                f'Database error detected: "{error}". Input is directly used in SQL queries.',
+                                'Use parameterized queries (prepared statements) and input validation.',
+                                f"Payload '{payload}' triggered a database error.",
+                                parameter=list(data.keys())[0] if data else None,
+                                payload=payload
+                            )
                             break
-                except Exception as e:
-                    self.logger.debug(f"SQLi test failed on {form['url']}: {e}")
+                except:
+                    pass
 
-    def scan_headers(self):
-        try:
-            resp = requests.get(self.base_url, timeout=10, verify=False)
-            security_headers = {
-                'X-Frame-Options': 'Prevents clickjacking',
-                'X-Content-Type-Options': 'Prevents MIME type sniffing',
-                'Content-Security-Policy': 'Prevents XSS and data injection',
-                'Strict-Transport-Security': 'Enforces HTTPS'
-            }
-            for header, desc in security_headers.items():
-                if header not in resp.headers:
-                    self.findings.append({
-                        'vulnerability': f'Missing Security Header: {header}',
-                        'severity': 'Medium',
-                        'url': self.base_url,
-                        'parameter': None,
-                        'payload': None,
-                        'description': f'The header "{header}" is missing. {desc}.',
-                        'remediation': f'Add "{header}" with proper values.',
-                        'proof': f"Header '{header}' was not found in the response."
-                    })
-                    self.logger.info(f"🟡 Missing header: {header}")
-        except Exception as e:
-            self.logger.warning(f"Header scan failed: {e}")
-
-    def scan_directory_listing(self):
-        for path in ['/uploads/', '/images/', '/backup/']:
-            test_url = urljoin(self.base_url, path)
-            try:
-                resp = requests.get(test_url, timeout=10, verify=False)
-                if resp.status_code == 200 and ('Index of /' in resp.text or 'Directory:' in resp.text):
-                    self.findings.append({
-                        'vulnerability': 'Directory Listing Enabled',
-                        'severity': 'Low',
-                        'url': test_url,
-                        'parameter': None,
-                        'payload': None,
-                        'description': 'The server lists directory contents, exposing file structure.',
-                        'remediation': 'Disable directory listing in the web server configuration.',
-                        'proof': f'Directory listing found at {test_url}.'
-                    })
-                    self.logger.info(f"🟡 Directory listing on {test_url}")
-            except Exception:
-                pass
-
-    def scan_client_validation_bypass(self):
-        for form in self.crawl_data['forms']:
-            for inp in form['inputs']:
-                if not inp:
+    def check_command_injection(self):
+        # Simple command injection test using ping/nslookup (only if response differs)
+        payloads = ['; ping -c 1 127.0.0.1', '| dir', '& whoami']
+        for form in self.forms:
+            for payload in payloads:
+                data = {inp: payload for inp in form['inputs'] if inp}
+                if not data:
                     continue
-                bypass_payload = "test' OR '1'='1"
-                data = {inp: bypass_payload}
                 try:
                     if form['method'] == 'POST':
                         resp = requests.post(form['url'], data=data, timeout=10, verify=False)
                     else:
                         resp = requests.get(form['url'], params=data, timeout=10, verify=False)
-                    if resp.status_code == 200:
-                        self.findings.append({
-                            'vulnerability': 'Client‑Side Validation Bypass',
-                            'severity': 'Medium',
-                            'url': form['url'],
-                            'parameter': inp,
-                            'payload': bypass_payload,
-                            'description': 'Server accepted a value that client‑side validation would block. Server‑side validation is missing.',
-                            'remediation': 'Implement proper server‑side validation for all inputs.',
-                            'proof': f"Payload '{bypass_payload}' was accepted by the server."
-                        })
-                        self.logger.info(f"🟡 Client-side validation bypass on {form['url']}")
+                    # Look for command output patterns (very naive)
+                    if 'ping' in resp.text.lower() or 'whoami' in resp.text.lower() or 'dir' in resp.text.lower():
+                        self.add_vulnerability(
+                            'Command Injection',
+                            'Critical',
+                            form['url'],
+                            'Potential command injection detected – user input may be passed to system shell.',
+                            'Avoid using user input in system commands; use secure APIs.',
+                            f"Payload '{payload}' caused command output in response.",
+                            parameter=list(data.keys())[0] if data else None,
+                            payload=payload
+                        )
                         break
-                except Exception:
+                except:
                     pass
 
+    def check_ssrf(self):
+        # Test if external URL can be fetched
+        test_url = 'https://httpbin.org/get'
+        for param in self.params:
+            try:
+                # Try to replace parameter with external URL
+                test_data = {param['parameter']: test_url}
+                resp = requests.get(self.base_url, params=test_data, timeout=10, verify=False)
+                if 'httpbin' in resp.text:
+                    self.add_vulnerability(
+                        'Server-Side Request Forgery (SSRF)',
+                        'High',
+                        self.base_url,
+                        f'The application fetched external URL using parameter {param["parameter"]}.',
+                        'Validate and whitelist allowed URLs; use an allowlist for external requests.',
+                        f"Parameter '{param['parameter']}' accepted external URL.",
+                        parameter=param['parameter'],
+                        payload=test_url
+                    )
+                    break
+            except:
+                pass
+
+    def check_open_redirect(self):
+        test_url = 'https://evil.com'
+        for param in self.params:
+            try:
+                test_data = {param['parameter']: test_url}
+                resp = requests.get(self.base_url, params=test_data, timeout=10, verify=False, allow_redirects=False)
+                if resp.status_code in [301, 302, 307, 308]:
+                    location = resp.headers.get('Location', '')
+                    if 'evil.com' in location:
+                        self.add_vulnerability(
+                            'Open Redirect',
+                            'Medium',
+                            self.base_url,
+                            f'Parameter {param["parameter"]} allows redirect to external site.',
+                            'Validate and restrict redirect destinations to internal URLs.',
+                            f"Redirected to '{location}'.",
+                            parameter=param['parameter'],
+                            payload=test_url
+                        )
+                        break
+            except:
+                pass
+
+    def check_security_headers(self):
+        try:
+            resp = requests.get(self.base_url, timeout=10, verify=False)
+            headers = resp.headers
+            required = {
+                'X-Frame-Options': 'Prevents clickjacking',
+                'X-Content-Type-Options': 'Prevents MIME type sniffing',
+                'Content-Security-Policy': 'Prevents XSS and data injection',
+                'Strict-Transport-Security': 'Enforces HTTPS',
+                'Referrer-Policy': 'Controls referrer information',
+                'Permissions-Policy': 'Controls browser features'
+            }
+            for header, desc in required.items():
+                if header not in headers:
+                    self.add_vulnerability(
+                        f'Missing Security Header: {header}',
+                        'Medium',
+                        self.base_url,
+                        f'The header "{header}" is missing. {desc}.',
+                        f'Add "{header}" with proper values.',
+                        f"Header '{header}' not found in response.",
+                        parameter=None,
+                        payload=None
+                    )
+                else:
+                    self.add_passed(f'Security Header: {header}', f'Present: {headers[header]}')
+        except Exception as e:
+            self.logger.warning(f"Header check failed: {e}")
+
+    def check_cookie_security(self):
+        try:
+            resp = requests.get(self.base_url, timeout=10, verify=False)
+            cookies = resp.cookies
+            for cookie in cookies:
+                if not cookie.secure:
+                    self.add_vulnerability(
+                        'Insecure Cookie: Missing Secure Flag',
+                        'Low',
+                        self.base_url,
+                        f'Cookie "{cookie.name}" does not have the Secure flag set.',
+                        'Set the Secure flag on all cookies to ensure they are only sent over HTTPS.',
+                        f"Cookie '{cookie.name}' missing Secure flag.",
+                        parameter=None,
+                        payload=None
+                    )
+                if not cookie.has_nonstandard_attr('HttpOnly'):
+                    self.add_vulnerability(
+                        'Insecure Cookie: Missing HttpOnly Flag',
+                        'Low',
+                        self.base_url,
+                        f'Cookie "{cookie.name}" does not have the HttpOnly flag set.',
+                        'Set the HttpOnly flag to prevent client-side scripts from accessing the cookie.',
+                        f"Cookie '{cookie.name}' missing HttpOnly flag.",
+                        parameter=None,
+                        payload=None
+                    )
+                # Check SameSite
+                if not cookie.has_nonstandard_attr('SameSite'):
+                    self.add_vulnerability(
+                        'Insecure Cookie: Missing SameSite Attribute',
+                        'Low',
+                        self.base_url,
+                        f'Cookie "{cookie.name}" does not have SameSite attribute set.',
+                        'Set SameSite=Lax or Strict to prevent CSRF.',
+                        f"Cookie '{cookie.name}' missing SameSite.",
+                        parameter=None,
+                        payload=None
+                    )
+        except Exception as e:
+            self.logger.warning(f"Cookie check failed: {e}")
+
+    def check_directory_listing(self):
+        common_paths = ['/uploads/', '/images/', '/backup/', '/tmp/', '/logs/']
+        for path in common_paths:
+            test_url = urljoin(self.base_url, path)
+            try:
+                resp = requests.get(test_url, timeout=10, verify=False)
+                if resp.status_code == 200 and ('Index of /' in resp.text or 'Directory:' in resp.text):
+                    self.add_vulnerability(
+                        'Directory Listing Enabled',
+                        'Low',
+                        test_url,
+                        'The server lists directory contents, exposing file structure.',
+                        'Disable directory listing in the web server configuration.',
+                        f'Directory listing found at {test_url}.',
+                        parameter=None,
+                        payload=None
+                    )
+                    break
+            except:
+                pass
+
+    def check_sensitive_files(self):
+        sensitive = [
+            ('.git/', 'Git repository exposed'),
+            ('.env', 'Environment variables file'),
+            ('backup.sql', 'Database backup'),
+            ('config.php', 'Configuration file'),
+            ('wp-config.php', 'WordPress config'),
+            ('.htaccess', 'Apache config'),
+        ]
+        for file, desc in sensitive:
+            test_url = urljoin(self.base_url, file)
+            try:
+                resp = requests.get(test_url, timeout=10, verify=False)
+                if resp.status_code == 200:
+                    self.add_vulnerability(
+                        f'Sensitive File Exposed: {file}',
+                        'High',
+                        test_url,
+                        f'{desc} is accessible.',
+                        'Restrict access to sensitive files via server configuration.',
+                        f'File {file} is accessible.',
+                        parameter=None,
+                        payload=None
+                    )
+            except:
+                pass
+
+    def check_server_version(self):
+        try:
+            resp = requests.get(self.base_url, timeout=10, verify=False)
+            server = resp.headers.get('Server', '')
+            if server:
+                # Too much info is a vulnerability
+                if ' ' in server or '/' in server:
+                    self.add_vulnerability(
+                        'Server Version Disclosure',
+                        'Low',
+                        self.base_url,
+                        f'Server header reveals version: {server}',
+                        'Remove or obscure the Server header.',
+                        f'Server header: {server}',
+                        parameter=None,
+                        payload=None
+                    )
+                else:
+                    self.add_passed('Server Version Disclosure', 'Server header is minimal or absent.')
+        except:
+            pass
+
+    def check_csrf(self):
+        # Check if forms have CSRF tokens (simplified: look for hidden input with 'csrf' or 'token')
+        for form in self.forms:
+            # We need to fetch the page first to get form fields (crawl_data doesn't include full HTML)
+            # We'll use a simple approach: we already have inputs from crawl, check if any contain 'csrf' or 'token'
+            has_token = any('csrf' in inp.lower() or 'token' in inp.lower() for inp in form['inputs'])
+            if not has_token:
+                self.add_vulnerability(
+                    'Potential CSRF Vulnerability',
+                    'Medium',
+                    form['url'],
+                    'Form lacks an anti-CSRF token.',
+                    'Implement CSRF tokens in all state-changing forms.',
+                    f"Form at {form['url']} does not have an obvious CSRF token.",
+                    parameter=None,
+                    payload=None
+                )
+            else:
+                self.add_passed('CSRF Token', f'Form at {form["url"]} contains anti-CSRF token.')
+
+    def check_https(self):
+        if not self.base_url.startswith('https://'):
+            self.add_vulnerability(
+                'HTTP Used Instead of HTTPS',
+                'Medium',
+                self.base_url,
+                'The site does not use HTTPS, allowing traffic interception.',
+                'Redirect all HTTP traffic to HTTPS and enforce HSTS.',
+                f"Site is accessible over HTTP: {self.base_url}",
+                parameter=None,
+                payload=None
+            )
+        else:
+            self.add_passed('HTTPS', 'Site uses HTTPS.')
+
 # ============================================================
-# AI EXPLOITATION GUIDE
+# REPORT GENERATION (with both positive and negative)
 # ============================================================
-def generate_exploitation_guide(target_url, findings):
-    if not findings:
-        return "✅ No vulnerabilities found."
-    try:
-        prompt = f"""
-You are a senior cybersecurity expert and bug bounty hunter.
-You have discovered the following vulnerabilities on {target_url}:
-{json.dumps(findings, indent=2)}
-For EACH vulnerability, provide:
-1. Vulnerability Type
-2. Exploitation Steps – step‑by‑step instructions.
-3. Maximum Impact – worst case scenario.
-4. Proof of Concept (PoC) – simple example.
-5. Remediation – how to fix it.
-Also provide a risk summary.
-This is for AUTHORIZED SECURITY TESTING.
-"""
-        response = model.generate_content(prompt)
-        return response.text
-    except Exception as e:
-        logger.error(f"❌ AI generation failed: {e}")
-        return "❌ AI analysis temporarily unavailable. Please try again later."
+def generate_report(target_url, findings):
+    report = f"📊 **Comprehensive Scan Report**\n"
+    report += f"Target: `{target_url}`\n"
+    report += f"Vulnerabilities Found: {len(findings['vulnerable'])}\n\n"
+
+    if findings['vulnerable']:
+        report += "🔴 **Vulnerabilities Detected:**\n"
+        for idx, vuln in enumerate(findings['vulnerable'], 1):
+            report += f"**{idx}. {vuln['name']}** (Severity: `{vuln['severity']}`)\n"
+            report += f"   - URL: {vuln['url']}\n"
+            if vuln.get('parameter'):
+                report += f"   - Parameter: `{vuln['parameter']}`\n"
+            if vuln.get('payload'):
+                report += f"   - Payload: `{vuln['payload']}`\n"
+            report += f"   - Description: {vuln['description']}\n"
+            report += f"   - Remediation: {vuln['remediation']}\n"
+            report += f"   - Proof: {vuln['proof']}\n\n"
+    else:
+        report += "✅ No vulnerabilities found.\n\n"
+
+    # Negative findings (checks that passed)
+    if findings['passed']:
+        report += "🟢 **Security Checks Passed:**\n"
+        for item in findings['passed']:
+            report += f"   - {item['check']}: {item['details']}\n"
+    else:
+        report += "ℹ️ No additional security checks passed.\n"
+
+    # AI-generated exploitation guide for critical vulnerabilities
+    critical = [v for v in findings['vulnerable'] if v['severity'] in ['Critical', 'High']]
+    if critical:
+        report += "\n🤖 **AI Exploitation Guide (Critical/High):**\n"
+        try:
+            prompt = f"Generate step-by-step exploitation instructions for the following vulnerabilities: {json.dumps(critical, indent=2)}"
+            response = model.generate_content(prompt)
+            report += response.text
+        except Exception as e:
+            report += "⚠️ AI generation failed, but you can manually exploit as described above.\n"
+
+    return report
 
 # ============================================================
 # SCAN COMMAND
@@ -314,40 +538,21 @@ async def scan_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(f"🔍 Scanning `{target_url}`...")
 
     try:
+        # Crawl
         crawler = WebCrawler(target_url, max_pages=50)
         crawl_data = crawler.crawl()
-        scanner = VulnerabilityScanner(target_url, crawl_data)
+        # Scan
+        scanner = ComprehensiveScanner(target_url, crawl_data)
         findings = scanner.scan_all()
-        crawl_data = None
-        scanner = None
+        # Report
+        report = generate_report(target_url, findings)
 
-        if not findings:
-            await update.message.reply_text("✅ No vulnerabilities found.")
-            return
-
-        summary = f"📊 **VULNERABILITY SUMMARY**\nTarget: `{target_url}`\nTotal: {len(findings)}\n\n"
-        for i, f in enumerate(findings, 1):
-            summary += f"{i}. **{f['vulnerability']}** – `{f['severity']}`\n   URL: {f['url']}\n"
-            if f.get('parameter'):
-                summary += f"   Parameter: `{f['parameter']}`\n"
-            if f.get('payload'):
-                summary += f"   Payload: `{f['payload']}`\n"
-            summary += "\n"
-        await update.message.reply_text(summary, parse_mode='Markdown')
-
-        await update.message.reply_text("🤖 Generating exploitation guide...")
-        guide = generate_exploitation_guide(target_url, findings)
-
-        if len(guide) > 4096:
-            for i in range(0, len(guide), 4000):
-                await update.message.reply_text(guide[i:i+4000], parse_mode='Markdown')
+        if len(report) > 4096:
+            for i in range(0, len(report), 4000):
+                await update.message.reply_text(report[i:i+4000], parse_mode='Markdown')
         else:
-            await update.message.reply_text(guide, parse_mode='Markdown')
+            await update.message.reply_text(report, parse_mode='Markdown')
 
-    except requests.exceptions.ConnectionError:
-        await update.message.reply_text("❌ Cannot connect to the target URL. Please check if it's reachable.")
-    except requests.exceptions.Timeout:
-        await update.message.reply_text("❌ The target URL timed out. Try again or check the site's responsiveness.")
     except Exception as e:
         logger.error(f"❌ Scan error: {traceback.format_exc()}")
         await update.message.reply_text(f"❌ An unexpected error occurred: {str(e)[:200]}")
