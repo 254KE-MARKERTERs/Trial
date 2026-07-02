@@ -1,6 +1,11 @@
 import os
+import sys
 import re
 import json
+import asyncio
+import logging
+import traceback
+import signal
 import requests
 from urllib.parse import urljoin, urlparse, parse_qs
 from queue import Queue
@@ -9,26 +14,58 @@ from telegram import Update
 from telegram.ext import Application, CommandHandler, ContextTypes
 import google.generativeai as genai
 
-# 🔥 Hardcoded credentials – Testing tokens
+# ============================================================
+# LOGGING
+# ============================================================
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger(__name__)
+
+# ============================================================
+# HARDCODED CREDENTIALS – Replace with your real tokens
+# ============================================================
 TELEGRAM_TOKEN = "8585104821:AAFXZn3g7QG9NsCmLmZuyfviQkPddOYMJzc"
 GEMINI_API_KEY = "AQ.Ab8RN6LaSwaPA6i3WkMqdmGSVunWJTE6rRTaa4bPnbM1LAO0aQ"
 ALLOWED_CHAT_ID = "8468538314"
 
-if not TELEGRAM_TOKEN or not GEMINI_API_KEY:
-    raise Exception("Missing TELEGRAM_TOKEN or GEMINI_API_KEY")
+if not TELEGRAM_TOKEN or TELEGRAM_TOKEN == "YOUR_TELEGRAM_BOT_TOKEN":
+    logger.error("❌ TELEGRAM_TOKEN is not set.")
+    sys.exit(1)
+if not GEMINI_API_KEY or GEMINI_API_KEY == "YOUR_GEMINI_API_KEY":
+    logger.error("❌ GEMINI_API_KEY is not set.")
+    sys.exit(1)
 
-genai.configure(api_key=GEMINI_API_KEY)
-model = genai.GenerativeModel('gemini-1.5-flash')
+logger.info("✅ Tokens validated.")
 
+try:
+    genai.configure(api_key=GEMINI_API_KEY)
+    model = genai.GenerativeModel('gemini-1.5-flash')
+    logger.info("✅ Gemini initialized.")
+except Exception as e:
+    logger.error(f"❌ Gemini init failed: {e}")
+    sys.exit(1)
+
+# ============================================================
+# COMMAND HANDLERS
+# ============================================================
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text(
-        "🦅 **Commands:**\n"
-        "/scan <url> – Start vulnerability scan\n"
-        "/help – Show this message\n\n"
-        "Example: `/scan https://example.com`",
-        parse_mode='Markdown'
-    )
+    try:
+        await update.message.reply_text(
+            "🦅 **Commands:**\n"
+            "/scan <url> – Start vulnerability scan\n"
+            "/help – Show this message\n\n"
+            "Example: `/scan https://example.com`",
+            parse_mode='Markdown'
+        )
+    except Exception as e:
+        logger.error(f"help_command error: {e}")
+        await update.message.reply_text("❌ An error occurred. Please try again.")
 
+# ============================================================
+# WEB CRAWLER
+# ============================================================
 class WebCrawler:
     def __init__(self, base_url, max_pages=50):
         self.base_url = base_url
@@ -37,15 +74,17 @@ class WebCrawler:
         self.queue.put(base_url)
         self.max_pages = max_pages
         self.results = {'forms': [], 'params': []}
+        self.logger = logging.getLogger(__name__)
 
     def crawl(self):
+        self.logger.info(f"📡 Crawling {self.base_url} (max {self.max_pages})")
         while not self.queue.empty() and len(self.visited) < self.max_pages:
             url = self.queue.get()
             if url in self.visited:
                 continue
             self.visited.add(url)
             try:
-                response = requests.get(url, timeout=10, verify=False)
+                response = requests.get(url, timeout=15, verify=False)
                 if response.status_code != 200:
                     continue
                 soup = BeautifulSoup(response.text, 'html.parser')
@@ -71,23 +110,32 @@ class WebCrawler:
                             'parameter': key,
                             'sample_value': params[key][0]
                         })
-            except Exception:
-                pass
+            except requests.exceptions.Timeout:
+                self.logger.warning(f"⏰ Timeout on {url}")
+            except Exception as e:
+                self.logger.error(f"❌ Error on {url}: {e}")
             self.queue.task_done()
+        self.logger.info(f"✅ Crawl complete: {len(self.results['forms'])} forms, {len(self.results['params'])} params")
         return self.results
 
+# ============================================================
+# VULNERABILITY SCANNER
+# ============================================================
 class VulnerabilityScanner:
     def __init__(self, base_url, crawl_data):
         self.base_url = base_url
         self.crawl_data = crawl_data
         self.findings = []
+        self.logger = logging.getLogger(__name__)
 
     def scan_all(self):
+        self.logger.info("🔐 Starting vulnerability scan...")
         self.scan_xss()
         self.scan_sqli()
         self.scan_headers()
         self.scan_directory_listing()
         self.scan_client_validation_bypass()
+        self.logger.info(f"✅ Scan complete: {len(self.findings)} findings")
         return self.findings
 
     def scan_xss(self):
@@ -113,8 +161,9 @@ class VulnerabilityScanner:
                             'remediation': 'Apply HTML entity encoding to all user input before reflection.',
                             'proof': f"Payload '{payload}' appeared in the response."
                         })
-                except Exception:
-                    pass
+                        self.logger.info(f"🔴 XSS found on {form['url']}")
+                except Exception as e:
+                    self.logger.debug(f"XSS test failed on {form['url']}: {e}")
 
     def scan_sqli(self):
         payloads = ["' OR '1'='1", "'; DROP TABLE users; --", "UNION SELECT ALL"]
@@ -141,9 +190,10 @@ class VulnerabilityScanner:
                                 'remediation': 'Use parameterized queries (prepared statements) and input validation.',
                                 'proof': f"Payload '{payload}' triggered a database error."
                             })
+                            self.logger.info(f"🔴 SQLi found on {form['url']}")
                             break
-                except Exception:
-                    pass
+                except Exception as e:
+                    self.logger.debug(f"SQLi test failed on {form['url']}: {e}")
 
     def scan_headers(self):
         try:
@@ -166,8 +216,9 @@ class VulnerabilityScanner:
                         'remediation': f'Add "{header}" with proper values.',
                         'proof': f"Header '{header}' was not found in the response."
                     })
-        except Exception:
-            pass
+                    self.logger.info(f"🟡 Missing header: {header}")
+        except Exception as e:
+            self.logger.warning(f"Header scan failed: {e}")
 
     def scan_directory_listing(self):
         for path in ['/uploads/', '/images/', '/backup/']:
@@ -185,6 +236,7 @@ class VulnerabilityScanner:
                         'remediation': 'Disable directory listing in the web server configuration.',
                         'proof': f'Directory listing found at {test_url}.'
                     })
+                    self.logger.info(f"🟡 Directory listing on {test_url}")
             except Exception:
                 pass
 
@@ -211,14 +263,19 @@ class VulnerabilityScanner:
                             'remediation': 'Implement proper server‑side validation for all inputs.',
                             'proof': f"Payload '{bypass_payload}' was accepted by the server."
                         })
+                        self.logger.info(f"🟡 Client-side validation bypass on {form['url']}")
                         break
                 except Exception:
                     pass
 
+# ============================================================
+# AI EXPLOITATION GUIDE
+# ============================================================
 def generate_exploitation_guide(target_url, findings):
     if not findings:
         return "✅ No vulnerabilities found."
-    prompt = f"""
+    try:
+        prompt = f"""
 You are a senior cybersecurity expert and bug bounty hunter.
 You have discovered the following vulnerabilities on {target_url}:
 {json.dumps(findings, indent=2)}
@@ -231,17 +288,25 @@ For EACH vulnerability, provide:
 Also provide a risk summary.
 This is for AUTHORIZED SECURITY TESTING.
 """
-    response = model.generate_content(prompt)
-    return response.text
+        response = model.generate_content(prompt)
+        return response.text
+    except Exception as e:
+        logger.error(f"❌ AI generation failed: {e}")
+        return "❌ AI analysis temporarily unavailable. Please try again later."
 
+# ============================================================
+# SCAN COMMAND
+# ============================================================
 async def scan_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = str(update.effective_user.id)
     if ALLOWED_CHAT_ID and user_id != ALLOWED_CHAT_ID:
         await update.message.reply_text("⛔ Unauthorized.")
         return
+
     if not context.args:
         await update.message.reply_text("❌ Provide a URL: /scan https://example.com")
         return
+
     target_url = context.args[0]
     if not target_url.startswith(('http://', 'https://')):
         target_url = 'https://' + target_url
@@ -272,19 +337,53 @@ async def scan_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         await update.message.reply_text("🤖 Generating exploitation guide...")
         guide = generate_exploitation_guide(target_url, findings)
+
         if len(guide) > 4096:
             for i in range(0, len(guide), 4000):
                 await update.message.reply_text(guide[i:i+4000], parse_mode='Markdown')
         else:
             await update.message.reply_text(guide, parse_mode='Markdown')
-    except Exception as e:
-        await update.message.reply_text(f"❌ Error: {str(e)}")
 
-def main():
+    except requests.exceptions.ConnectionError:
+        await update.message.reply_text("❌ Cannot connect to the target URL. Please check if it's reachable.")
+    except requests.exceptions.Timeout:
+        await update.message.reply_text("❌ The target URL timed out. Try again or check the site's responsiveness.")
+    except Exception as e:
+        logger.error(f"❌ Scan error: {traceback.format_exc()}")
+        await update.message.reply_text(f"❌ An unexpected error occurred: {str(e)[:200]}")
+
+# ============================================================
+# MAIN – Manual event loop (no app.run_polling)
+# ============================================================
+async def run_bot():
     app = Application.builder().token(TELEGRAM_TOKEN).build()
     app.add_handler(CommandHandler("help", help_command))
     app.add_handler(CommandHandler("scan", scan_command))
-    app.run_polling()
+    await app.initialize()
+    await app.start()
+    await app.updater.start_polling()
+    logger.info("✅ Bot is running. Press Ctrl+C to stop.")
+    try:
+        while True:
+            await asyncio.sleep(3600)
+    except asyncio.CancelledError:
+        pass
+    finally:
+        await app.updater.stop()
+        await app.stop()
+
+def main():
+    logger.info("🦅 Starting Vulnerability Scanner Bot...")
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    try:
+        loop.run_until_complete(run_bot())
+    except KeyboardInterrupt:
+        logger.info("👋 Bot stopped by user.")
+    except Exception as e:
+        logger.error(f"❌ Fatal error: {traceback.format_exc()}")
+    finally:
+        loop.close()
 
 if __name__ == "__main__":
     main()
