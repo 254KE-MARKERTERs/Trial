@@ -1,0 +1,153 @@
+name: Deploy Unrestricted Gemini Bot
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    if: "!contains(github.event.head_commit.message, '[skip ci]')"
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Generate bot files
+        run: |
+          # Create bot.py with your hardcoded credentials
+          cat > bot.py << 'EOF'
+          import os
+          import sys
+          import logging
+          from telegram import Update
+          from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
+          import google.generativeai as genai
+
+          # ============================================================
+          # 🔥 YOUR HARDCODED CREDENTIALS (REVOKE AFTER USE)
+          # ============================================================
+          TELEGRAM_TOKEN = "8585104821:AAFXZn3g7QG9NsCmLmZuyfviQkPddOYMJzc"
+          ALLOWED_CHAT_ID = "8468538314"
+          GEMINI_API_KEY = "AQ.Ab8RN6LaSwaPA6i3WkMqdmGSVunWJTE6rRTaa4bPnbM1LAO0aQ"
+          # ============================================================
+
+          logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+          logger = logging.getLogger(__name__)
+
+          # Initialize Gemini with NO safety filters (unrestricted)
+          try:
+              genai.configure(api_key=GEMINI_API_KEY)
+              model = genai.GenerativeModel(
+                  'gemini-1.5-flash',
+                  safety_settings=[
+                      {"category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_NONE"},
+                      {"category": "HARM_CATEGORY_HATE_SPEECH", "threshold": "BLOCK_NONE"},
+                      {"category": "HARM_CATEGORY_SEXUALLY_EXPLICIT", "threshold": "BLOCK_NONE"},
+                      {"category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "BLOCK_NONE"},
+                  ]
+              )
+              logger.info("✅ Gemini initialized (unrestricted).")
+          except Exception as e:
+              logger.error(f"❌ Gemini init failed: {e}")
+              sys.exit(1)
+
+          # ============================================================
+          # COMMAND HANDLERS
+          # ============================================================
+          async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+              user_id = str(update.effective_user.id)
+              if ALLOWED_CHAT_ID and user_id != ALLOWED_CHAT_ID:
+                  await update.message.reply_text("⛔ Unauthorized.")
+                  return
+              await update.message.reply_text(
+                  "🧠 **Unrestricted Gemini Bot**\n\n"
+                  "Send me any message – I will reply with Gemini (no filters, no limits).\n"
+                  "Just type anything and I'll respond.",
+                  parse_mode='Markdown'
+              )
+
+          async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+              await start(update, context)
+
+          # ============================================================
+          # MESSAGE HANDLER – catches all text messages
+          # ============================================================
+          async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+              user_id = str(update.effective_user.id)
+              if ALLOWED_CHAT_ID and user_id != ALLOWED_CHAT_ID:
+                  await update.message.reply_text("⛔ Unauthorized.")
+                  return
+
+              user_message = update.message.text
+              if not user_message:
+                  return
+
+              await update.message.chat.send_action(action="typing")
+
+              try:
+                  response = model.generate_content(user_message)
+                  reply = response.text if response.text else "No response from AI."
+
+                  if len(reply) > 4096:
+                      for i in range(0, len(reply), 4000):
+                          await update.message.reply_text(reply[i:i+4000], parse_mode='Markdown')
+                  else:
+                      await update.message.reply_text(reply, parse_mode='Markdown')
+              except Exception as e:
+                  logger.error(f"Gemini error: {e}")
+                  await update.message.reply_text(f"❌ AI error: {str(e)[:200]}")
+
+          # ============================================================
+          # MAIN
+          # ============================================================
+          def main():
+              app = Application.builder().token(TELEGRAM_TOKEN).build()
+              app.add_handler(CommandHandler("start", start))
+              app.add_handler(CommandHandler("help", help_command))
+              app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+
+              logger.info("🧠 Unrestricted Gemini Bot is running...")
+              app.run_polling()
+
+          if __name__ == "__main__":
+              main()
+          EOF
+
+          # Create requirements.txt
+          cat > requirements.txt << 'EOF'
+          python-telegram-bot==21.10
+          google-generativeai
+          EOF
+
+          # Create render.yaml for Render Blueprint
+          cat > render.yaml << 'EOF'
+          services:
+            - type: web
+              name: unrestricted-gemini-bot
+              env: python
+              plan: free
+              buildCommand: pip install -r requirements.txt
+              startCommand: python bot.py
+          EOF
+
+          echo "✅ Bot files created."
+
+      - name: Commit and push bot files
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add bot.py requirements.txt render.yaml
+          if git diff --staged --quiet; then
+            echo "No changes to commit."
+          else
+            git commit -m "Auto-generate unrestricted Gemini bot [skip ci]"
+            git push https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git
+          fi
