@@ -1,5 +1,6 @@
 import os
 import sys
+import asyncio
 import logging
 from telegram import Update
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
@@ -16,7 +17,6 @@ GEMINI_API_KEY = "AQ.Ab8RN6LaSwaPA6i3WkMqdmGSVunWJTE6rRTaa4bPnbM1LAO0aQ"
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
-# Initialize Gemini with NO safety filters (unrestricted)
 try:
     genai.configure(api_key=GEMINI_API_KEY)
     model = genai.GenerativeModel(
@@ -33,9 +33,6 @@ except Exception as e:
     logger.error(f"❌ Gemini init failed: {e}")
     sys.exit(1)
 
-# ============================================================
-# COMMAND HANDLERS
-# ============================================================
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = str(update.effective_user.id)
     if ALLOWED_CHAT_ID and user_id != ALLOWED_CHAT_ID:
@@ -51,9 +48,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await start(update, context)
 
-# ============================================================
-# MESSAGE HANDLER – catches all text messages
-# ============================================================
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = str(update.effective_user.id)
     if ALLOWED_CHAT_ID and user_id != ALLOWED_CHAT_ID:
@@ -79,10 +73,11 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         logger.error(f"Gemini error: {e}")
         await update.message.reply_text(f"❌ AI error: {str(e)[:200]}")
 
-# ============================================================
-# MAIN
-# ============================================================
 def main():
+    # Python 3.14+ fix: create and set a new event loop
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+
     app = Application.builder().token(TELEGRAM_TOKEN).build()
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("help", help_command))
