@@ -3,3 +3,4 @@ requests
 beautifulsoup4
 google-generativeai
 urllib3
+python-nmap

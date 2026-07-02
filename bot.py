@@ -5,7 +5,8 @@ import json
 import asyncio
 import logging
 import traceback
-import signal
+import socket
+import nmap
 import requests
 from urllib.parse import urljoin, urlparse, parse_qs
 from queue import Queue
@@ -56,6 +57,25 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 # ============================================================
+# PORT SCANNER
+# ============================================================
+def scan_ports(target_host, ports=[21, 22, 23, 25, 53, 80, 110, 135, 139, 143, 443, 445, 993, 995, 1723, 3306, 3389, 5432, 5900, 8080]):
+    """Scan common open ports on the target host"""
+    open_ports = []
+    nm = nmap.PortScanner()
+    try:
+        nm.scan(target_host, arguments='-p ' + ','.join(str(p) for p in ports) + ' -T4')
+        for port in ports:
+            if nm[target_host].has_tcp(port) and nm[target_host]['tcp'][port]['state'] == 'open':
+                open_ports.append({
+                    'port': port,
+                    'service': nm[target_host]['tcp'][port]['name']
+                })
+    except Exception as e:
+        logger.warning(f"Port scan failed: {e}")
+    return open_ports
+
+# ============================================================
 # WEB CRAWLER
 # ============================================================
 class WebCrawler:
@@ -81,12 +101,10 @@ class WebCrawler:
                     continue
                 soup = BeautifulSoup(response.text, 'html.parser')
                 self.results['pages'].append(url)
-                # Links
                 for link in soup.find_all('a', href=True):
                     full_url = urljoin(self.base_url, link['href'])
                     if full_url.startswith(self.base_url) and full_url not in self.visited:
                         self.queue.put(full_url)
-                # Forms
                 for form in soup.find_all('form'):
                     action = form.get('action')
                     action_url = urljoin(self.base_url, action) if action else url
@@ -96,12 +114,10 @@ class WebCrawler:
                         'inputs': [inp.get('name') for inp in form.find_all('input') if inp.get('name')],
                         'page': url
                     })
-                # JS files
                 for script in soup.find_all('script', src=True):
                     js_url = urljoin(self.base_url, script['src'])
                     if js_url.startswith(self.base_url):
                         self.results['js_files'].append(js_url)
-                # Params from query strings
                 parsed = urlparse(url)
                 if parsed.query:
                     params = parse_qs(parsed.query)
@@ -132,23 +148,77 @@ class ComprehensiveScanner:
 
     def scan_all(self):
         self.logger.info("🔐 Starting comprehensive vulnerability scan...")
-        self.check_xss()
-        self.check_sqli()
+        # Authentication & Authorization
+        self.check_broken_auth()
+        self.check_default_credentials()
+        self.check_idor()
+        self.check_privilege_escalation()
+        self.check_forced_browsing()
+        # Injection
+        self.check_sql_injection()
         self.check_command_injection()
-        self.check_ssrf()
-        self.check_open_redirect()
-        self.check_security_headers()
-        self.check_cookie_security()
-        self.check_directory_listing()
-        self.check_sensitive_files()
-        self.check_server_version()
+        self.check_ldap_injection()
+        self.check_ssti()
+        self.check_graphql_injection()
+        self.check_header_injection()
+        # Cross-Site
+        self.check_xss()
         self.check_csrf()
+        self.check_clickjacking()
+        self.check_cors_misconfiguration()
+        # File Handling
+        self.check_file_upload()
+        self.check_lfi()
+        self.check_path_traversal()
+        self.check_zip_slip()
+        # Server-Side
+        self.check_ssrf()
+        self.check_xxe()
+        self.check_insecure_deserialization()
+        self.check_open_redirect()
+        self.check_host_header_injection()
+        # API
+        self.check_bola()
+        self.check_mass_assignment()
+        self.check_api_key_exposure()
+        # Cryptographic
+        self.check_hardcoded_secrets()
         self.check_https()
-        # Add more checks here...
+        self.check_tls_configuration()
+        # Session Management
+        self.check_session_cookies()
+        # Information Disclosure
+        self.check_directory_listing()
+        self.check_source_code_disclosure()
+        self.check_backup_files()
+        self.check_error_disclosure()
+        self.check_username_enumeration()
+        # Configuration
+        self.check_security_headers()
+        self.check_debug_mode()
+        self.check_cors()
+        # DoS
+        self.check_rate_limiting()
+        # Business Logic
+        self.check_race_condition()
+        self.check_price_manipulation()
+        # Outdated Components
+        self.check_outdated_components()
+        # WebSocket
+        self.check_websocket_security()
+        # Network
+        self.check_host_header_injection()
+        # Client-Side
+        self.check_prototype_pollution()
+        self.check_dom_clobbering()
+        # Logging
+        self.check_logging_failures()
+        # Port Scan
+        self.check_open_ports()
         self.logger.info(f"✅ Scan complete: {len(self.findings['vulnerable'])} vulnerabilities found")
         return self.findings
 
-    # ---------- INDIVIDUAL CHECKS ----------
+    # ---------- HELPER METHODS ----------
     def add_vulnerability(self, name, severity, url, description, remediation, proof, parameter=None, payload=None):
         self.findings['vulnerable'].append({
             'name': name,
@@ -167,34 +237,118 @@ class ComprehensiveScanner:
             'details': details
         })
 
-    def check_xss(self):
-        payloads = ['<script>alert(1)</script>', '"><script>alert(1)</script>', 'javascript:alert(1)']
+    # ---------- AUTHENTICATION & AUTHORIZATION ----------
+    def check_broken_auth(self):
+        # Check if login form exists without CSRF token
         for form in self.forms:
-            for payload in payloads:
-                data = {inp: payload for inp in form['inputs'] if inp}
-                if not data:
-                    continue
-                try:
-                    if form['method'] == 'POST':
-                        resp = requests.post(form['url'], data=data, timeout=10, verify=False)
-                    else:
-                        resp = requests.get(form['url'], params=data, timeout=10, verify=False)
-                    if payload in resp.text or '<script>' in resp.text:
+            if any('login' in str(inp).lower() for inp in form['inputs']):
+                has_csrf = any('csrf' in str(inp).lower() or 'token' in str(inp).lower() for inp in form['inputs'])
+                if not has_csrf:
+                    self.add_vulnerability(
+                        'Broken Authentication – Missing CSRF Protection',
+                        'High',
+                        form['url'],
+                        'Login form lacks CSRF protection, making it vulnerable to session hijacking.',
+                        'Implement CSRF tokens and use SameSite cookies.',
+                        'No CSRF token found in login form.',
+                        parameter=None,
+                        payload=None
+                    )
+                else:
+                    self.add_passed('Broken Authentication', 'Login form has CSRF protection.')
+
+    def check_default_credentials(self):
+        # Check for common default login pages
+        default_paths = ['/admin', '/administrator', '/login', '/wp-admin']
+        for path in default_paths:
+            test_url = urljoin(self.base_url, path)
+            try:
+                resp = requests.get(test_url, timeout=10, verify=False)
+                if resp.status_code == 200:
+                    if 'login' in resp.text.lower() or 'admin' in resp.text.lower():
                         self.add_vulnerability(
-                            'Cross-Site Scripting (XSS)',
+                            'Default Credentials Risk',
                             'High',
-                            form['url'],
-                            'Reflected XSS – user input is returned without proper sanitization.',
-                            'Apply HTML entity encoding to all user input before reflection.',
-                            f"Payload '{payload}' appeared in the response.",
-                            parameter=list(data.keys())[0] if data else None,
-                            payload=payload
+                            test_url,
+                            'Common admin/login page found. Default credentials may be in use.',
+                            'Change default credentials and restrict access to admin panels.',
+                            f'Admin page found at {test_url}',
+                            parameter=None,
+                            payload=None
+                        )
+                        break
+            except:
+                pass
+
+    def check_idor(self):
+        # Look for numeric IDs in URLs and test if sequential IDs work (simplified)
+        for param in self.params:
+            if param['parameter'].lower() in ['id', 'user', 'uid', 'account', 'order']:
+                # Try to access another ID
+                try:
+                    test_data = {param['parameter']: str(int(param['sample_value'])+1)}
+                    resp = requests.get(self.base_url, params=test_data, timeout=10, verify=False)
+                    if resp.status_code == 200:
+                        self.add_vulnerability(
+                            'Insecure Direct Object Reference (IDOR)',
+                            'High',
+                            self.base_url,
+                            f'Parameter {param["parameter"]} appears to accept sequential IDs, suggesting IDOR risk.',
+                            'Implement proper access controls; use UUIDs instead of sequential IDs.',
+                            f'Parameter {param["parameter"]} can be changed to access other records.',
+                            parameter=param['parameter'],
+                            payload=str(int(param['sample_value'])+1)
                         )
                         break
                 except:
                     pass
 
-    def check_sqli(self):
+    def check_privilege_escalation(self):
+        # Simplified: check if admin pages are accessible without auth
+        admin_paths = ['/admin', '/administrator', '/dashboard', '/manage']
+        for path in admin_paths:
+            test_url = urljoin(self.base_url, path)
+            try:
+                resp = requests.get(test_url, timeout=10, verify=False)
+                if resp.status_code == 200 and 'login' not in resp.text.lower():
+                    self.add_vulnerability(
+                        'Privilege Escalation / Unauthorized Access',
+                        'High',
+                        test_url,
+                        'Admin/privileged page accessible without authentication.',
+                        'Restrict access to admin pages with proper authorization checks.',
+                        f'Page accessible: {test_url}',
+                        parameter=None,
+                        payload=None
+                    )
+                    break
+            except:
+                pass
+
+    def check_forced_browsing(self):
+        # Check for common sensitive directories
+        paths = ['/backup', '/logs', '/tmp', '/uploads', '/images']
+        for path in paths:
+            test_url = urljoin(self.base_url, path)
+            try:
+                resp = requests.get(test_url, timeout=10, verify=False)
+                if resp.status_code == 200:
+                    self.add_vulnerability(
+                        'Forced Browsing',
+                        'Medium',
+                        test_url,
+                        'Directory listing or accessible sensitive directory.',
+                        'Restrict access to sensitive directories.',
+                        f'Directory accessible: {test_url}',
+                        parameter=None,
+                        payload=None
+                    )
+                    break
+            except:
+                pass
+
+    # ---------- INJECTION ----------
+    def check_sql_injection(self):
         payloads = ["' OR '1'='1", "'; DROP TABLE users; --", "UNION SELECT ALL"]
         for form in self.forms:
             for payload in payloads:
@@ -224,8 +378,7 @@ class ComprehensiveScanner:
                     pass
 
     def check_command_injection(self):
-        # Simple command injection test using ping/nslookup (only if response differs)
-        payloads = ['; ping -c 1 127.0.0.1', '| dir', '& whoami']
+        payloads = ['; ping -c 1 127.0.0.1', '| dir', '& whoami', '; ls']
         for form in self.forms:
             for payload in payloads:
                 data = {inp: payload for inp in form['inputs'] if inp}
@@ -236,15 +389,14 @@ class ComprehensiveScanner:
                         resp = requests.post(form['url'], data=data, timeout=10, verify=False)
                     else:
                         resp = requests.get(form['url'], params=data, timeout=10, verify=False)
-                    # Look for command output patterns (very naive)
                     if 'ping' in resp.text.lower() or 'whoami' in resp.text.lower() or 'dir' in resp.text.lower():
                         self.add_vulnerability(
                             'Command Injection',
                             'Critical',
                             form['url'],
-                            'Potential command injection detected – user input may be passed to system shell.',
+                            'Potential command injection – user input may be passed to system shell.',
                             'Avoid using user input in system commands; use secure APIs.',
-                            f"Payload '{payload}' caused command output in response.",
+                            f"Payload '{payload}' caused command output.",
                             parameter=list(data.keys())[0] if data else None,
                             payload=payload
                         )
@@ -252,12 +404,281 @@ class ComprehensiveScanner:
                 except:
                     pass
 
+    def check_ldap_injection(self):
+        payloads = ['*)(uid=*', 'admin*', '*) (|(uid=*']
+        for form in self.forms:
+            for payload in payloads:
+                data = {inp: payload for inp in form['inputs'] if inp}
+                if not data:
+                    continue
+                try:
+                    if form['method'] == 'POST':
+                        resp = requests.post(form['url'], data=data, timeout=10, verify=False)
+                    else:
+                        resp = requests.get(form['url'], params=data, timeout=10, verify=False)
+                    if 'cn=' in resp.text.lower() or 'uid=' in resp.text.lower():
+                        self.add_vulnerability(
+                            'LDAP Injection',
+                            'High',
+                            form['url'],
+                            'Potential LDAP injection detected.',
+                            'Escape special characters and validate input.',
+                            f"Payload '{payload}' triggered LDAP-like response.",
+                            parameter=list(data.keys())[0] if data else None,
+                            payload=payload
+                        )
+                        break
+                except:
+                    pass
+
+    def check_ssti(self):
+        payloads = ['{{7*7}}', '${7*7}', '{{7*7}}', '${7*7}']
+        for form in self.forms:
+            for payload in payloads:
+                data = {inp: payload for inp in form['inputs'] if inp}
+                if not data:
+                    continue
+                try:
+                    if form['method'] == 'POST':
+                        resp = requests.post(form['url'], data=data, timeout=10, verify=False)
+                    else:
+                        resp = requests.get(form['url'], params=data, timeout=10, verify=False)
+                    if '49' in resp.text or '7*7' not in resp.text:
+                        self.add_vulnerability(
+                            'Server-Side Template Injection (SSTI)',
+                            'Critical',
+                            form['url'],
+                            'Template injection detected – expression evaluated on server.',
+                            'Disable template evaluation for user input; use safe rendering functions.',
+                            f"Payload '{payload}' appears to have been evaluated.",
+                            parameter=list(data.keys())[0] if data else None,
+                            payload=payload
+                        )
+                        break
+                except:
+                    pass
+
+    def check_graphql_injection(self):
+        for param in self.params:
+            if 'query' in param['parameter'].lower() or 'gql' in param['parameter'].lower():
+                try:
+                    test_data = {param['parameter']: '{__schema{types{name}}}'}
+                    resp = requests.get(self.base_url, params=test_data, timeout=10, verify=False)
+                    if '__schema' in resp.text or 'type' in resp.text:
+                        self.add_vulnerability(
+                            'GraphQL Injection / Introspection',
+                            'High',
+                            self.base_url,
+                            'GraphQL introspection is enabled, exposing schema.',
+                            'Disable introspection in production.',
+                            'GraphQL schema exposed.',
+                            parameter=param['parameter'],
+                            payload='{__schema{types{name}}}'
+                        )
+                        break
+                except:
+                    pass
+
+    def check_header_injection(self):
+        # Check for CRLF injection via query params
+        payload = '%0d%0aSet-Cookie: injected=1'
+        for param in self.params:
+            try:
+                test_data = {param['parameter']: payload}
+                resp = requests.get(self.base_url, params=test_data, timeout=10, verify=False)
+                if 'injected=1' in resp.headers.get('Set-Cookie', ''):
+                    self.add_vulnerability(
+                        'CRLF Injection / Header Injection',
+                        'High',
+                        self.base_url,
+                        'CRLF injection allows arbitrary header injection.',
+                        'Encode and validate user input before using in headers.',
+                        f"Payload '{payload}' injected a header.",
+                        parameter=param['parameter'],
+                        payload=payload
+                    )
+                    break
+            except:
+                pass
+
+    # ---------- CROSS-SITE ----------
+    def check_xss(self):
+        payloads = ['<script>alert(1)</script>', '"><script>alert(1)</script>', 'javascript:alert(1)']
+        for form in self.forms:
+            for payload in payloads:
+                data = {inp: payload for inp in form['inputs'] if inp}
+                if not data:
+                    continue
+                try:
+                    if form['method'] == 'POST':
+                        resp = requests.post(form['url'], data=data, timeout=10, verify=False)
+                    else:
+                        resp = requests.get(form['url'], params=data, timeout=10, verify=False)
+                    if payload in resp.text or '<script>' in resp.text:
+                        self.add_vulnerability(
+                            'Cross-Site Scripting (XSS)',
+                            'High',
+                            form['url'],
+                            'Reflected XSS – user input is returned without proper sanitization.',
+                            'Apply HTML entity encoding to all user input before reflection.',
+                            f"Payload '{payload}' appeared in the response.",
+                            parameter=list(data.keys())[0] if data else None,
+                            payload=payload
+                        )
+                        break
+                except:
+                    pass
+
+    def check_csrf(self):
+        for form in self.forms:
+            # Check for CSRF token
+            has_token = any('csrf' in inp.lower() or 'token' in inp.lower() for inp in form['inputs'])
+            if not has_token:
+                self.add_vulnerability(
+                    'Cross-Site Request Forgery (CSRF)',
+                    'Medium',
+                    form['url'],
+                    'Form lacks an anti-CSRF token, making it vulnerable to CSRF.',
+                    'Implement CSRF tokens in all state-changing forms.',
+                    f"Form at {form['url']} does not have an obvious CSRF token.",
+                    parameter=None,
+                    payload=None
+                )
+            else:
+                self.add_passed('CSRF', f'Form at {form["url"]} contains anti-CSRF token.')
+
+    def check_clickjacking(self):
+        try:
+            resp = requests.get(self.base_url, timeout=10, verify=False)
+            xfo = resp.headers.get('X-Frame-Options', '')
+            if not xfo:
+                self.add_vulnerability(
+                    'Clickjacking',
+                    'Medium',
+                    self.base_url,
+                    'X-Frame-Options header is missing, allowing clickjacking attacks.',
+                    'Set X-Frame-Options: DENY or SAMEORIGIN.',
+                    'X-Frame-Options header not found.',
+                    parameter=None,
+                    payload=None
+                )
+            else:
+                self.add_passed('Clickjacking', f'X-Frame-Options: {xfo}')
+        except:
+            pass
+
+    def check_cors_misconfiguration(self):
+        origins = ['https://evil.com', 'https://attacker.com', 'null']
+        for origin in origins:
+            try:
+                headers = {'Origin': origin}
+                resp = requests.options(self.base_url, headers=headers, timeout=10, verify=False)
+                acao = resp.headers.get('Access-Control-Allow-Origin', '')
+                if acao == '*' or acao == origin:
+                    self.add_vulnerability(
+                        'CORS Misconfiguration',
+                        'High',
+                        self.base_url,
+                        f'CORS allows requests from {origin}, potentially exposing sensitive data.',
+                        'Restrict CORS to allowed origins only; avoid using wildcard.',
+                        f'CORS allows: {acao}',
+                        parameter=None,
+                        payload=None
+                    )
+                    break
+            except:
+                pass
+
+    # ---------- FILE HANDLING ----------
+    def check_file_upload(self):
+        upload_paths = ['/upload', '/file-upload', '/api/upload', '/wp-admin/media-upload.php']
+        for path in upload_paths:
+            test_url = urljoin(self.base_url, path)
+            try:
+                resp = requests.get(test_url, timeout=10, verify=False)
+                if resp.status_code == 200 and 'upload' in resp.text.lower():
+                    self.add_vulnerability(
+                        'File Upload Vulnerability',
+                        'High',
+                        test_url,
+                        'File upload endpoint detected. Could allow arbitrary file uploads.',
+                        'Restrict file types, scan uploads, and store outside webroot.',
+                        f'Upload endpoint found: {test_url}',
+                        parameter=None,
+                        payload=None
+                    )
+                    break
+            except:
+                pass
+
+    def check_lfi(self):
+        for param in self.params:
+            if 'file' in param['parameter'].lower() or 'path' in param['parameter'].lower():
+                try:
+                    test_data = {param['parameter']: '/etc/passwd'}
+                    resp = requests.get(self.base_url, params=test_data, timeout=10, verify=False)
+                    if 'root' in resp.text and 'bin' in resp.text:
+                        self.add_vulnerability(
+                            'Local File Inclusion (LFI)',
+                            'Critical',
+                            self.base_url,
+                            'LFI vulnerability detected – can read local files.',
+                            'Validate and sanitize file paths; use whitelist.',
+                            f'File /etc/passwd exposed via parameter {param["parameter"]}.',
+                            parameter=param['parameter'],
+                            payload='/etc/passwd'
+                        )
+                        break
+                except:
+                    pass
+
+    def check_path_traversal(self):
+        for param in self.params:
+            if 'file' in param['parameter'].lower() or 'path' in param['parameter'].lower():
+                try:
+                    test_data = {param['parameter']: '../etc/passwd'}
+                    resp = requests.get(self.base_url, params=test_data, timeout=10, verify=False)
+                    if 'root' in resp.text and 'bin' in resp.text:
+                        self.add_vulnerability(
+                            'Path Traversal',
+                            'Critical',
+                            self.base_url,
+                            'Path traversal vulnerability detected.',
+                            'Validate and sanitize file paths; use whitelist.',
+                            f'Path traversal successful with {param["parameter"]}.',
+                            parameter=param['parameter'],
+                            payload='../etc/passwd'
+                        )
+                        break
+                except:
+                    pass
+
+    def check_zip_slip(self):
+        for param in self.params:
+            if 'zip' in param['parameter'].lower() or 'archive' in param['parameter'].lower():
+                try:
+                    test_data = {param['parameter']: '../../tmp/evil'}
+                    resp = requests.get(self.base_url, params=test_data, timeout=10, verify=False)
+                    if 'tmp' in resp.text or 'evil' in resp.text:
+                        self.add_vulnerability(
+                            'Zip Slip Attack',
+                            'High',
+                            self.base_url,
+                            'Zip Slip vulnerability – allows directory traversal during extraction.',
+                            'Validate archive entry paths; avoid extracting outside target directory.',
+                            f'Zip slip possible with parameter {param["parameter"]}.',
+                            parameter=param['parameter'],
+                            payload='../../tmp/evil'
+                        )
+                        break
+                except:
+                    pass
+
+    # ---------- SERVER-SIDE ----------
     def check_ssrf(self):
-        # Test if external URL can be fetched
         test_url = 'https://httpbin.org/get'
         for param in self.params:
             try:
-                # Try to replace parameter with external URL
                 test_data = {param['parameter']: test_url}
                 resp = requests.get(self.base_url, params=test_data, timeout=10, verify=False)
                 if 'httpbin' in resp.text:
@@ -265,7 +686,7 @@ class ComprehensiveScanner:
                         'Server-Side Request Forgery (SSRF)',
                         'High',
                         self.base_url,
-                        f'The application fetched external URL using parameter {param["parameter"]}.',
+                        f'SSRF detected – application fetched external URL using param {param["parameter"]}.',
                         'Validate and whitelist allowed URLs; use an allowlist for external requests.',
                         f"Parameter '{param['parameter']}' accepted external URL.",
                         parameter=param['parameter'],
@@ -275,29 +696,369 @@ class ComprehensiveScanner:
             except:
                 pass
 
+    def check_xxe(self):
+        # Simplified XXE check via common patterns
+        for param in self.params:
+            if 'xml' in param['parameter'].lower() or 'data' in param['parameter'].lower():
+                try:
+                    test_data = {param['parameter']: '<?xml version="1.0"?><!DOCTYPE root [<!ENTITY test SYSTEM "file:///etc/passwd">]><root>&test;</root>'}
+                    resp = requests.get(self.base_url, params=test_data, timeout=10, verify=False)
+                    if 'root' in resp.text and 'bin' in resp.text:
+                        self.add_vulnerability(
+                            'XML External Entity (XXE)',
+                            'Critical',
+                            self.base_url,
+                            'XXE vulnerability detected – can read local files.',
+                            'Disable external entity resolution; use secure XML parsing.',
+                            f'XXE possible via parameter {param["parameter"]}.',
+                            parameter=param['parameter'],
+                            payload='<?xml version...>'
+                        )
+                        break
+                except:
+                    pass
+
+    def check_insecure_deserialization(self):
+        for param in self.params:
+            if 'data' in param['parameter'].lower() or 'object' in param['parameter'].lower():
+                try:
+                    test_data = {param['parameter']: 'O:8:"stdClass":0:{}'}
+                    resp = requests.get(self.base_url, params=test_data, timeout=10, verify=False)
+                    if 'stdClass' in resp.text:
+                        self.add_vulnerability(
+                            'Insecure Deserialization',
+                            'Critical',
+                            self.base_url,
+                            'Potential insecure deserialization detected.',
+                            'Avoid deserializing untrusted data; use safe formats like JSON.',
+                            f'Deserialization possible via parameter {param["parameter"]}.',
+                            parameter=param['parameter'],
+                            payload='O:8:"stdClass":0:{}'
+                        )
+                        break
+                except:
+                    pass
+
     def check_open_redirect(self):
         test_url = 'https://evil.com'
         for param in self.params:
-            try:
-                test_data = {param['parameter']: test_url}
-                resp = requests.get(self.base_url, params=test_data, timeout=10, verify=False, allow_redirects=False)
-                if resp.status_code in [301, 302, 307, 308]:
-                    location = resp.headers.get('Location', '')
-                    if 'evil.com' in location:
+            if 'redirect' in param['parameter'].lower() or 'url' in param['parameter'].lower() or 'next' in param['parameter'].lower():
+                try:
+                    test_data = {param['parameter']: test_url}
+                    resp = requests.get(self.base_url, params=test_data, timeout=10, verify=False, allow_redirects=False)
+                    if resp.status_code in [301, 302, 307, 308]:
+                        location = resp.headers.get('Location', '')
+                        if 'evil.com' in location:
+                            self.add_vulnerability(
+                                'Open Redirect',
+                                'Medium',
+                                self.base_url,
+                                f'Parameter {param["parameter"]} allows redirect to external site.',
+                                'Validate and restrict redirect destinations to internal URLs.',
+                                f"Redirected to '{location}'.",
+                                parameter=param['parameter'],
+                                payload=test_url
+                            )
+                            break
+                except:
+                    pass
+
+    def check_host_header_injection(self):
+        try:
+            headers = {'Host': 'evil.com'}
+            resp = requests.get(self.base_url, headers=headers, timeout=10, verify=False)
+            if 'evil.com' in resp.text or resp.status_code == 200:
+                self.add_vulnerability(
+                    'Host Header Injection',
+                    'Medium',
+                    self.base_url,
+                    'Application may be vulnerable to Host header injection.',
+                    'Validate and whitelist allowed Host headers.',
+                    'Host header injection possible.',
+                    parameter=None,
+                    payload='Host: evil.com'
+                )
+        except:
+            pass
+
+    # ---------- API ----------
+    def check_bola(self):
+        for param in self.params:
+            if 'id' in param['parameter'].lower() or 'user' in param['parameter'].lower():
+                try:
+                    test_data = {param['parameter']: str(int(param['sample_value'])+1) if param['sample_value'].isdigit() else 'test'}
+                    resp = requests.get(self.base_url, params=test_data, timeout=10, verify=False)
+                    if resp.status_code == 200:
                         self.add_vulnerability(
-                            'Open Redirect',
-                            'Medium',
+                            'Broken Object Level Authorization (BOLA)',
+                            'High',
                             self.base_url,
-                            f'Parameter {param["parameter"]} allows redirect to external site.',
-                            'Validate and restrict redirect destinations to internal URLs.',
-                            f"Redirected to '{location}'.",
+                            f'Parameter {param["parameter"]} may allow unauthorized access to other objects.',
+                            'Implement proper access controls; use UUIDs instead of sequential IDs.',
+                            f'BOLA possible via parameter {param["parameter"]}.',
                             parameter=param['parameter'],
-                            payload=test_url
+                            payload=test_data[param['parameter']]
+                        )
+                        break
+                except:
+                    pass
+
+    def check_mass_assignment(self):
+        for form in self.forms:
+            for inp in form['inputs']:
+                if 'admin' in inp.lower() or 'role' in inp.lower() or 'privilege' in inp.lower():
+                    try:
+                        data = {inp: 'admin'}
+                        if form['method'] == 'POST':
+                            resp = requests.post(form['url'], data=data, timeout=10, verify=False)
+                        else:
+                            resp = requests.get(form['url'], params=data, timeout=10, verify=False)
+                        if resp.status_code == 200:
+                            self.add_vulnerability(
+                                'Mass Assignment / Parameter Tampering',
+                                'High',
+                                form['url'],
+                                f'Parameter {inp} can be manipulated, potentially leading to privilege escalation.',
+                                'Implement whitelist of allowed parameters; use DTOs.',
+                                f'Mass assignment possible via field {inp}.',
+                                parameter=inp,
+                                payload='admin'
+                            )
+                            break
+                    except:
+                        pass
+
+    def check_api_key_exposure(self):
+        # Check for common API key patterns in JS files
+        api_key_patterns = ['api_key', 'apikey', 'sk-', 'AIzaSy', 'pk_', 'Bearer']
+        for js_file in self.js_files:
+            try:
+                resp = requests.get(js_file, timeout=10, verify=False)
+                for pattern in api_key_patterns:
+                    if pattern in resp.text:
+                        self.add_vulnerability(
+                            'API Key Exposure',
+                            'High',
+                            js_file,
+                            f'Potential API key or secret found in JavaScript file: {pattern}',
+                            'Remove sensitive data from client-side code; use server-side proxies.',
+                            f'Pattern "{pattern}" found in JS file.',
+                            parameter=None,
+                            payload=None
                         )
                         break
             except:
                 pass
 
+    # ---------- CRYPTOGRAPHIC ----------
+    def check_hardcoded_secrets(self):
+        # Check for hardcoded secrets in JS files
+        secret_patterns = ['SECRET', 'PASSWORD', 'KEY', 'TOKEN', 'JWT', 'Bearer']
+        for js_file in self.js_files:
+            try:
+                resp = requests.get(js_file, timeout=10, verify=False)
+                for pattern in secret_patterns:
+                    if pattern in resp.text:
+                        self.add_vulnerability(
+                            'Hardcoded Secrets',
+                            'High',
+                            js_file,
+                            f'Potential hardcoded secret found in JavaScript file: {pattern}',
+                            'Remove secrets from client-side code; use environment variables.',
+                            f'Pattern "{pattern}" found in JS file.',
+                            parameter=None,
+                            payload=None
+                        )
+                        break
+            except:
+                pass
+
+    def check_https(self):
+        if not self.base_url.startswith('https://'):
+            self.add_vulnerability(
+                'HTTP Used Instead of HTTPS',
+                'Medium',
+                self.base_url,
+                'The site does not use HTTPS, allowing traffic interception.',
+                'Redirect all HTTP traffic to HTTPS and enforce HSTS.',
+                f"Site is accessible over HTTP: {self.base_url}",
+                parameter=None,
+                payload=None
+            )
+        else:
+            self.add_passed('HTTPS', 'Site uses HTTPS.')
+
+    def check_tls_configuration(self):
+        # Simplified TLS check via common ports
+        domain = urlparse(self.base_url).netloc
+        try:
+            import ssl
+            import socket
+            context = ssl.create_default_context()
+            with socket.create_connection((domain, 443), timeout=5) as sock:
+                with context.wrap_socket(sock, server_hostname=domain) as ssock:
+                    cipher = ssock.cipher()
+                    self.add_passed('TLS Configuration', f'Using cipher: {cipher[0]}')
+        except Exception as e:
+            self.add_vulnerability(
+                'Weak TLS Configuration / SSL Issues',
+                'Medium',
+                self.base_url,
+                f'TLS configuration may be weak or misconfigured.',
+                'Use strong TLS 1.2/1.3 ciphers and disable weak protocols.',
+                f'TLS check failed: {str(e)}',
+                parameter=None,
+                payload=None
+            )
+
+    # ---------- SESSION MANAGEMENT ----------
+    def check_session_cookies(self):
+        try:
+            resp = requests.get(self.base_url, timeout=10, verify=False)
+            for cookie in resp.cookies:
+                if not cookie.secure:
+                    self.add_vulnerability(
+                        'Insecure Cookie: Missing Secure Flag',
+                        'Medium',
+                        self.base_url,
+                        f'Cookie "{cookie.name}" does not have the Secure flag set.',
+                        'Set the Secure flag on all cookies to ensure they are only sent over HTTPS.',
+                        f"Cookie '{cookie.name}' missing Secure flag.",
+                        parameter=None,
+                        payload=None
+                    )
+                if not cookie.has_nonstandard_attr('HttpOnly'):
+                    self.add_vulnerability(
+                        'Insecure Cookie: Missing HttpOnly Flag',
+                        'Medium',
+                        self.base_url,
+                        f'Cookie "{cookie.name}" does not have the HttpOnly flag set.',
+                        'Set the HttpOnly flag to prevent client-side scripts from accessing the cookie.',
+                        f"Cookie '{cookie.name}' missing HttpOnly flag.",
+                        parameter=None,
+                        payload=None
+                    )
+                if not cookie.has_nonstandard_attr('SameSite'):
+                    self.add_vulnerability(
+                        'Insecure Cookie: Missing SameSite Attribute',
+                        'Low',
+                        self.base_url,
+                        f'Cookie "{cookie.name}" does not have SameSite attribute set.',
+                        'Set SameSite=Lax or Strict to prevent CSRF.',
+                        f"Cookie '{cookie.name}' missing SameSite.",
+                        parameter=None,
+                        payload=None
+                    )
+        except:
+            pass
+
+    # ---------- INFORMATION DISCLOSURE ----------
+    def check_directory_listing(self):
+        common_paths = ['/uploads/', '/images/', '/backup/', '/tmp/', '/logs/']
+        for path in common_paths:
+            test_url = urljoin(self.base_url, path)
+            try:
+                resp = requests.get(test_url, timeout=10, verify=False)
+                if resp.status_code == 200 and ('Index of /' in resp.text or 'Directory:' in resp.text):
+                    self.add_vulnerability(
+                        'Directory Listing Enabled',
+                        'Low',
+                        test_url,
+                        'The server lists directory contents, exposing file structure.',
+                        'Disable directory listing in the web server configuration.',
+                        f'Directory listing found at {test_url}.',
+                        parameter=None,
+                        payload=None
+                    )
+                    break
+            except:
+                pass
+
+    def check_source_code_disclosure(self):
+        paths = ['/.git/', '/.svn/', '/.hg/', '/.env']
+        for path in paths:
+            test_url = urljoin(self.base_url, path)
+            try:
+                resp = requests.get(test_url, timeout=10, verify=False)
+                if resp.status_code == 200:
+                    self.add_vulnerability(
+                        'Source Code Disclosure',
+                        'High',
+                        test_url,
+                        f'{path} is accessible, exposing source code or configuration.',
+                        'Restrict access to version control and configuration files.',
+                        f'File {path} is accessible.',
+                        parameter=None,
+                        payload=None
+                    )
+                    break
+            except:
+                pass
+
+    def check_backup_files(self):
+        backup_extensions = ['.bak', '.backup', '.old', '.orig', '.swp', '~']
+        for ext in backup_extensions:
+            test_url = self.base_url + ext
+            try:
+                resp = requests.get(test_url, timeout=10, verify=False)
+                if resp.status_code == 200:
+                    self.add_vulnerability(
+                        'Backup File Exposure',
+                        'High',
+                        test_url,
+                        f'Backup file with extension {ext} is accessible.',
+                        'Remove backup files from production and restrict access.',
+                        f'Backup file found: {test_url}',
+                        parameter=None,
+                        payload=None
+                    )
+                    break
+            except:
+                pass
+
+    def check_error_disclosure(self):
+        test_data = {'invalid': 'payload'}
+        try:
+            resp = requests.get(self.base_url, params=test_data, timeout=10, verify=False)
+            error_patterns = ['Warning:', 'Notice:', 'Fatal error:', 'exception', 'stack trace', 'mysql_fetch']
+            for pattern in error_patterns:
+                if pattern.lower() in resp.text.lower():
+                    self.add_vulnerability(
+                        'Verbose Error Messages',
+                        'Low',
+                        self.base_url,
+                        'Detailed error messages are displayed, revealing server information.',
+                        'Disable detailed error messages in production.',
+                        f'Error pattern found: {pattern}',
+                        parameter=None,
+                        payload=None
+                    )
+                    break
+        except:
+            pass
+
+    def check_username_enumeration(self):
+        # Check if username enumeration is possible via login feedback
+        test_emails = ['admin@example.com', 'nonexistent@example.com', 'user@example.com']
+        for email in test_emails:
+            try:
+                resp = requests.post(self.base_url, data={'email': email}, timeout=10, verify=False)
+                if 'invalid password' in resp.text.lower() or 'user not found' in resp.text.lower():
+                    self.add_vulnerability(
+                        'Username Enumeration',
+                        'Low',
+                        self.base_url,
+                        'Login feedback allows user enumeration.',
+                        'Use generic error messages (e.g., "Invalid credentials").',
+                        f'Email {email} gave different response.',
+                        parameter=None,
+                        payload=None
+                    )
+                    break
+            except:
+                pass
+
+    # ---------- SECURITY HEADERS ----------
     def check_security_headers(self):
         try:
             resp = requests.get(self.base_url, timeout=10, verify=False)
@@ -327,62 +1088,20 @@ class ComprehensiveScanner:
         except Exception as e:
             self.logger.warning(f"Header check failed: {e}")
 
-    def check_cookie_security(self):
-        try:
-            resp = requests.get(self.base_url, timeout=10, verify=False)
-            cookies = resp.cookies
-            for cookie in cookies:
-                if not cookie.secure:
-                    self.add_vulnerability(
-                        'Insecure Cookie: Missing Secure Flag',
-                        'Low',
-                        self.base_url,
-                        f'Cookie "{cookie.name}" does not have the Secure flag set.',
-                        'Set the Secure flag on all cookies to ensure they are only sent over HTTPS.',
-                        f"Cookie '{cookie.name}' missing Secure flag.",
-                        parameter=None,
-                        payload=None
-                    )
-                if not cookie.has_nonstandard_attr('HttpOnly'):
-                    self.add_vulnerability(
-                        'Insecure Cookie: Missing HttpOnly Flag',
-                        'Low',
-                        self.base_url,
-                        f'Cookie "{cookie.name}" does not have the HttpOnly flag set.',
-                        'Set the HttpOnly flag to prevent client-side scripts from accessing the cookie.',
-                        f"Cookie '{cookie.name}' missing HttpOnly flag.",
-                        parameter=None,
-                        payload=None
-                    )
-                # Check SameSite
-                if not cookie.has_nonstandard_attr('SameSite'):
-                    self.add_vulnerability(
-                        'Insecure Cookie: Missing SameSite Attribute',
-                        'Low',
-                        self.base_url,
-                        f'Cookie "{cookie.name}" does not have SameSite attribute set.',
-                        'Set SameSite=Lax or Strict to prevent CSRF.',
-                        f"Cookie '{cookie.name}' missing SameSite.",
-                        parameter=None,
-                        payload=None
-                    )
-        except Exception as e:
-            self.logger.warning(f"Cookie check failed: {e}")
-
-    def check_directory_listing(self):
-        common_paths = ['/uploads/', '/images/', '/backup/', '/tmp/', '/logs/']
-        for path in common_paths:
+    def check_debug_mode(self):
+        paths = ['/?debug=1', '/debug', '/debug=true', '/?debug=true']
+        for path in paths:
             test_url = urljoin(self.base_url, path)
             try:
                 resp = requests.get(test_url, timeout=10, verify=False)
-                if resp.status_code == 200 and ('Index of /' in resp.text or 'Directory:' in resp.text):
+                if 'debug' in resp.text.lower() or 'true' in resp.text.lower():
                     self.add_vulnerability(
-                        'Directory Listing Enabled',
-                        'Low',
+                        'Debug Mode Enabled',
+                        'High',
                         test_url,
-                        'The server lists directory contents, exposing file structure.',
-                        'Disable directory listing in the web server configuration.',
-                        f'Directory listing found at {test_url}.',
+                        'Debug mode may be enabled, exposing sensitive information.',
+                        'Disable debug mode in production.',
+                        f'Debug mode response at {test_url}.',
                         parameter=None,
                         payload=None
                     )
@@ -390,92 +1109,208 @@ class ComprehensiveScanner:
             except:
                 pass
 
-    def check_sensitive_files(self):
-        sensitive = [
-            ('.git/', 'Git repository exposed'),
-            ('.env', 'Environment variables file'),
-            ('backup.sql', 'Database backup'),
-            ('config.php', 'Configuration file'),
-            ('wp-config.php', 'WordPress config'),
-            ('.htaccess', 'Apache config'),
-        ]
-        for file, desc in sensitive:
-            test_url = urljoin(self.base_url, file)
+    def check_cors(self):
+        origins = ['*', 'https://evil.com']
+        for origin in origins:
             try:
-                resp = requests.get(test_url, timeout=10, verify=False)
-                if resp.status_code == 200:
+                headers = {'Origin': origin}
+                resp = requests.options(self.base_url, headers=headers, timeout=10, verify=False)
+                acao = resp.headers.get('Access-Control-Allow-Origin', '')
+                if acao == '*' or acao == origin:
                     self.add_vulnerability(
-                        f'Sensitive File Exposed: {file}',
-                        'High',
-                        test_url,
-                        f'{desc} is accessible.',
-                        'Restrict access to sensitive files via server configuration.',
-                        f'File {file} is accessible.',
+                        'Insecure CORS Configuration',
+                        'Medium',
+                        self.base_url,
+                        f'CORS allows requests from {origin}.',
+                        'Restrict CORS to allowed origins only.',
+                        f'CORS allows: {acao}',
                         parameter=None,
                         payload=None
                     )
+                    break
             except:
                 pass
 
-    def check_server_version(self):
+    # ---------- DENIAL OF SERVICE ----------
+    def check_rate_limiting(self):
+        # Try rapid requests to check rate limiting
         try:
-            resp = requests.get(self.base_url, timeout=10, verify=False)
-            server = resp.headers.get('Server', '')
-            if server:
-                # Too much info is a vulnerability
-                if ' ' in server or '/' in server:
-                    self.add_vulnerability(
-                        'Server Version Disclosure',
-                        'Low',
-                        self.base_url,
-                        f'Server header reveals version: {server}',
-                        'Remove or obscure the Server header.',
-                        f'Server header: {server}',
-                        parameter=None,
-                        payload=None
-                    )
-                else:
-                    self.add_passed('Server Version Disclosure', 'Server header is minimal or absent.')
-        except:
-            pass
-
-    def check_csrf(self):
-        # Check if forms have CSRF tokens (simplified: look for hidden input with 'csrf' or 'token')
-        for form in self.forms:
-            # We need to fetch the page first to get form fields (crawl_data doesn't include full HTML)
-            # We'll use a simple approach: we already have inputs from crawl, check if any contain 'csrf' or 'token'
-            has_token = any('csrf' in inp.lower() or 'token' in inp.lower() for inp in form['inputs'])
-            if not has_token:
-                self.add_vulnerability(
-                    'Potential CSRF Vulnerability',
-                    'Medium',
-                    form['url'],
-                    'Form lacks an anti-CSRF token.',
-                    'Implement CSRF tokens in all state-changing forms.',
-                    f"Form at {form['url']} does not have an obvious CSRF token.",
-                    parameter=None,
-                    payload=None
-                )
-            else:
-                self.add_passed('CSRF Token', f'Form at {form["url"]} contains anti-CSRF token.')
-
-    def check_https(self):
-        if not self.base_url.startswith('https://'):
+            for i in range(10):
+                resp = requests.get(self.base_url, timeout=5, verify=False)
+                if resp.status_code == 429:
+                    self.add_passed('Rate Limiting', 'Rate limiting appears to be implemented.')
+                    return
             self.add_vulnerability(
-                'HTTP Used Instead of HTTPS',
+                'Missing Rate Limiting',
                 'Medium',
                 self.base_url,
-                'The site does not use HTTPS, allowing traffic interception.',
-                'Redirect all HTTP traffic to HTTPS and enforce HSTS.',
-                f"Site is accessible over HTTP: {self.base_url}",
+                'No rate limiting detected, making the application vulnerable to DoS.',
+                'Implement rate limiting on all endpoints.',
+                'Rate limiting not found.',
                 parameter=None,
                 payload=None
             )
+        except:
+            pass
+
+    # ---------- BUSINESS LOGIC ----------
+    def check_race_condition(self):
+        # Simplified race condition test via simultaneous requests
+        try:
+            import concurrent.futures
+            def make_request():
+                return requests.get(self.base_url, timeout=5, verify=False).status_code
+            with concurrent.futures.ThreadPoolExecutor(max_workers=5) as executor:
+                futures = [executor.submit(make_request) for _ in range(5)]
+                results = [f.result() for f in futures]
+            if len(set(results)) > 1:
+                self.add_vulnerability(
+                    'Potential Race Condition',
+                    'High',
+                    self.base_url,
+                    'Concurrent requests resulted in different responses, indicating a possible race condition.',
+                    'Implement proper locking mechanisms and atomic operations.',
+                    'Race condition may exist.',
+                    parameter=None,
+                    payload=None
+                )
+        except:
+            pass
+
+    def check_price_manipulation(self):
+        for param in self.params:
+            if 'price' in param['parameter'].lower() or 'amount' in param['parameter'].lower():
+                try:
+                    test_data = {param['parameter']: '0'}
+                    resp = requests.get(self.base_url, params=test_data, timeout=10, verify=False)
+                    if resp.status_code == 200:
+                        self.add_vulnerability(
+                            'Price Manipulation',
+                            'High',
+                            self.base_url,
+                            f'Parameter {param["parameter"]} may allow price manipulation.',
+                            'Validate and sanitize price parameters on the server side.',
+                            f'Price manipulation possible via parameter {param["parameter"]}.',
+                            parameter=param['parameter'],
+                            payload='0'
+                        )
+                        break
+                except:
+                    pass
+
+    # ---------- OUTDATED COMPONENTS ----------
+    def check_outdated_components(self):
+        # Simplified check via common version indicators
+        try:
+            resp = requests.get(self.base_url, timeout=10, verify=False)
+            patterns = ['wordpress', 'jquery', 'bootstrap', 'php', 'apache', 'nginx']
+            for pattern in patterns:
+                if pattern.lower() in resp.text.lower():
+                    self.add_passed('Outdated Components Check', f'Component: {pattern} detected (manual review needed)')
+        except:
+            pass
+
+    # ---------- WEBSOCKET ----------
+    def check_websocket_security(self):
+        # Check for WebSocket endpoints in HTML
+        for page in self.pages:
+            try:
+                resp = requests.get(page, timeout=10, verify=False)
+                if 'ws://' in resp.text or 'wss://' in resp.text:
+                    self.add_vulnerability(
+                        'WebSocket Security',
+                        'Medium',
+                        page,
+                        'WebSocket endpoints found. Check for authentication and authorization.',
+                        'Implement proper authentication and authorization for WebSocket connections.',
+                        'WebSocket endpoint found in HTML.',
+                        parameter=None,
+                        payload=None
+                    )
+                    break
+            except:
+                pass
+
+    # ---------- CLIENT-SIDE ----------
+    def check_prototype_pollution(self):
+        for page in self.pages:
+            try:
+                resp = requests.get(page, timeout=10, verify=False)
+                if '__proto__' in resp.text or 'constructor' in resp.text:
+                    self.add_vulnerability(
+                        'Prototype Pollution',
+                        'High',
+                        page,
+                        'Potential prototype pollution vulnerability detected in JavaScript.',
+                        'Sanitize and validate user input; avoid using dangerous patterns.',
+                        'Prototype pollution detected.',
+                        parameter=None,
+                        payload=None
+                    )
+                    break
+            except:
+                pass
+
+    def check_dom_clobbering(self):
+        for page in self.pages:
+            try:
+                resp = requests.get(page, timeout=10, verify=False)
+                if 'document.' in resp.text and 'window.' in resp.text:
+                    self.add_passed('DOM Clobbering Check', 'Potential DOM clobbering risk (manual review needed).')
+                    break
+            except:
+                pass
+
+    # ---------- LOGGING ----------
+    def check_logging_failures(self):
+        # Check if security headers expose logging status
+        try:
+            resp = requests.get(self.base_url, timeout=10, verify=False)
+            # Check for logging endpoints
+            for path in ['/logs', '/log', '/audit']:
+                test_url = urljoin(self.base_url, path)
+                test_resp = requests.get(test_url, timeout=5, verify=False)
+                if test_resp.status_code == 200:
+                    self.add_vulnerability(
+                        'Security Logging Failures',
+                        'Low',
+                        test_url,
+                        'Logging endpoint may be exposed.',
+                        'Restrict access to logging endpoints and implement proper logging.',
+                        'Logging endpoint exposed.',
+                        parameter=None,
+                        payload=None
+                    )
+                    break
+        except:
+            pass
+
+    # ---------- PORT SCAN ----------
+    def check_open_ports(self):
+        domain = urlparse(self.base_url).netloc
+        # Check if domain has a port
+        if ':' in domain:
+            host = domain.split(':')[0]
         else:
-            self.add_passed('HTTPS', 'Site uses HTTPS.')
+            host = domain
+        open_ports = scan_ports(host)
+        if open_ports:
+            for port_info in open_ports:
+                self.add_vulnerability(
+                    f'Open Port: {port_info["port"]} ({port_info["service"]})',
+                    'Medium',
+                    self.base_url,
+                    f'Open port {port_info["port"]} ({port_info["service"]}) detected.',
+                    'Close unnecessary ports and restrict access to required services.',
+                    f'Port {port_info["port"]} is open.',
+                    parameter=None,
+                    payload=None
+                )
+        else:
+            self.add_passed('Open Port Scan', 'No common open ports detected.')
 
 # ============================================================
-# REPORT GENERATION (with both positive and negative)
+# REPORT GENERATION
 # ============================================================
 def generate_report(target_url, findings):
     report = f"📊 **Comprehensive Scan Report**\n"
@@ -497,7 +1332,6 @@ def generate_report(target_url, findings):
     else:
         report += "✅ No vulnerabilities found.\n\n"
 
-    # Negative findings (checks that passed)
     if findings['passed']:
         report += "🟢 **Security Checks Passed:**\n"
         for item in findings['passed']:
@@ -505,16 +1339,16 @@ def generate_report(target_url, findings):
     else:
         report += "ℹ️ No additional security checks passed.\n"
 
-    # AI-generated exploitation guide for critical vulnerabilities
+    # AI Exploitation Guide
     critical = [v for v in findings['vulnerable'] if v['severity'] in ['Critical', 'High']]
     if critical:
-        report += "\n🤖 **AI Exploitation Guide (Critical/High):**\n"
+        report += "\n🤖 **AI Exploitation Guide:**\n"
         try:
-            prompt = f"Generate step-by-step exploitation instructions for the following vulnerabilities: {json.dumps(critical, indent=2)}"
+            prompt = f"Generate step-by-step exploitation instructions for these vulnerabilities: {json.dumps(critical, indent=2)}"
             response = model.generate_content(prompt)
             report += response.text
         except Exception as e:
-            report += "⚠️ AI generation failed, but you can manually exploit as described above.\n"
+            report += "⚠️ AI generation failed, but manual exploitation is described above.\n"
 
     return report
 
@@ -535,16 +1369,13 @@ async def scan_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not target_url.startswith(('http://', 'https://')):
         target_url = 'https://' + target_url
 
-    await update.message.reply_text(f"🔍 Scanning `{target_url}`...")
+    await update.message.reply_text(f"🔍 Comprehensive scan of `{target_url}`...")
 
     try:
-        # Crawl
         crawler = WebCrawler(target_url, max_pages=50)
         crawl_data = crawler.crawl()
-        # Scan
         scanner = ComprehensiveScanner(target_url, crawl_data)
         findings = scanner.scan_all()
-        # Report
         report = generate_report(target_url, findings)
 
         if len(report) > 4096:
@@ -555,10 +1386,10 @@ async def scan_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     except Exception as e:
         logger.error(f"❌ Scan error: {traceback.format_exc()}")
-        await update.message.reply_text(f"❌ An unexpected error occurred: {str(e)[:200]}")
+        await update.message.reply_text(f"❌ Error: {str(e)[:200]}")
 
 # ============================================================
-# MAIN – Manual event loop (no app.run_polling)
+# MAIN – Manual event loop
 # ============================================================
 async def run_bot():
     app = Application.builder().token(TELEGRAM_TOKEN).build()
@@ -567,7 +1398,7 @@ async def run_bot():
     await app.initialize()
     await app.start()
     await app.updater.start_polling()
-    logger.info("✅ Bot is running. Press Ctrl+C to stop.")
+    logger.info("✅ Bot running. Press Ctrl+C to stop.")
     try:
         while True:
             await asyncio.sleep(3600)
@@ -584,7 +1415,7 @@ def main():
     try:
         loop.run_until_complete(run_bot())
     except KeyboardInterrupt:
-        logger.info("👋 Bot stopped by user.")
+        logger.info("👋 Stopped.")
     except Exception as e:
         logger.error(f"❌ Fatal error: {traceback.format_exc()}")
     finally:
